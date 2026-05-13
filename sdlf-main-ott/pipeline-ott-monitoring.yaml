@@ -29,6 +29,9 @@ Parameters:
   pLutLambdaName:
     Type: String
     Default: sdlf-ott-mainLUT-refresh
+  pContentGapLambdaName:
+    Type: String
+    Default: sdlf-ott-mainCG-report
   pAlarmPeriodSeconds:
     Type: Number
     Default: 300
@@ -184,6 +187,35 @@ Resources:
                 "period": 86400,
                 "region": "${AWS::Region}"
               }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 25, "width": 12, "height": 6,
+              "properties": {
+                "title": "Content Gap Lambda — Invocations & Errors",
+                "metrics": [
+                  ["AWS/Lambda","Invocations","FunctionName","${pContentGapLambdaName}",{"label":"Invocations","color":"#2ca02c","stat":"Sum"}],
+                  ["AWS/Lambda","Errors","FunctionName","${pContentGapLambdaName}",{"label":"Errors","color":"#d62728","stat":"Sum"}]
+                ],
+                "view": "timeSeries",
+                "period": 86400,
+                "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12, "y": 25, "width": 12, "height": 6,
+              "properties": {
+                "title": "Content Gap Lambda — Duration (ms)",
+                "metrics": [
+                  ["AWS/Lambda","Duration","FunctionName","${pContentGapLambdaName}",{"label":"p50","stat":"p50","color":"#1f77b4"}],
+                  ["AWS/Lambda","Duration","FunctionName","${pContentGapLambdaName}",{"label":"p90","stat":"p90","color":"#ff7f0e"}],
+                  ["AWS/Lambda","Duration","FunctionName","${pContentGapLambdaName}",{"label":"p99","stat":"p99","color":"#d62728"}]
+                ],
+                "view": "timeSeries",
+                "period": 86400,
+                "region": "${AWS::Region}"
+              }
             }
           ]
         }
@@ -326,6 +358,46 @@ Resources:
       Period: 86400
       EvaluationPeriods: 1
       Threshold: 720000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref pSnsTopicArn
+
+  rAlarmContentGapErrors:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sdlf-ott-mainCG-report-errors
+      AlarmDescription: Content Gap Lambda had errors — analytics reports may be incomplete
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref pContentGapLambdaName
+      Statistic: Sum
+      Period: !Ref pAlarmPeriodSeconds
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref pSnsTopicArn
+      OKActions:
+        - !Ref pSnsTopicArn
+
+  rAlarmContentGapDuration:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sdlf-ott-mainCG-report-near-timeout
+      AlarmDescription: Content Gap Lambda p90 duration exceeded 270s (90% of 300s limit)
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref pContentGapLambdaName
+      ExtendedStatistic: p90
+      Period: 86400
+      EvaluationPeriods: 1
+      Threshold: 270000
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
       AlarmActions:

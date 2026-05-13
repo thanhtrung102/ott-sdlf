@@ -70,7 +70,12 @@ Deploy-Stack `
         "pBedrockModelId=global.anthropic.claude-haiku-4-5-20251001-v1:0"
     )
 
-# ── 6. Monitoring (dashboards + alarms) ──────────────────────────────────────
+# ── 6. Content Gap Lambda ────────────────────────────────────────────────────
+Deploy-Stack `
+    -StackName "sdlf-pipeline-ott-contentgap" `
+    -TemplatePath "$Repo\sdlf-main-ott\pipeline-ott-contentgap.yaml"
+
+# ── 7. Monitoring (dashboards + alarms) ──────────────────────────────────────
 Deploy-Stack `
     -StackName "sdlf-pipeline-ott-monitoring" `
     -TemplatePath "$Repo\sdlf-main-ott\pipeline-ott-monitoring.yaml"
