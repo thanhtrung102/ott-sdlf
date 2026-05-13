@@ -156,46 +156,22 @@ def lambda_handler(event, context):
     summary, errors = {}, 0
 
     try:
-        headers, rows = run_trending_query(cur_start, cur_end, base_start, base_end, use_fallback)
-        count_all = write_csv(f"{prefix}trending_all.csv", headers, rows)
-        summary["trending_all"] = count_all
-    except Exception as e:
-        logger.error(f"trending_all failed: {e}")
-        summary["trending_all"] = -1
-        errors += 1
-
-    try:
         headers, rows = run_trending_query(
             cur_start, cur_end, base_start, base_end, use_fallback,
             genre_filter="AND c.derived_genre = 'UNKNOWN'" if not use_fallback
                          else "AND derived_genre = 'UNKNOWN'",
         )
-        count_unknown = write_csv(f"{prefix}trending_unknown.csv", headers, rows)
-        summary["trending_unknown"] = count_unknown
+        summary["trending_unknown"] = write_csv(f"{prefix}trending_unknown.csv", headers, rows)
     except Exception as e:
         logger.error(f"trending_unknown failed: {e}")
         summary["trending_unknown"] = -1
         errors += 1
 
-    all_rows_sample = []
-    try:
-        _, sample = athena_query(
-            f"SELECT keyword_norm, derived_genre, COUNT(*) AS cnt "
-            f"FROM {DB}.curated "
-            f"WHERE dt >= '{cur_start}' AND dt < '{cur_end}' "
-            f"GROUP BY keyword_norm, derived_genre ORDER BY cnt DESC LIMIT 5"
-        )
-        all_rows_sample = [f"{r['keyword_norm']} ({r['derived_genre']}, {r['cnt']})" for r in sample]
-    except Exception:
-        pass
-
     mode = "fallback/volume-only" if use_fallback else f"growth >={MIN_GROWTH}x"
     message = (
         f"OTT Trending Keywords Report — {dt}\n"
         f"Mode: {mode}\n"
-        f"Trending keywords (all genres): {summary.get('trending_all', 0)}\n"
         f"Trending UNKNOWN (LUT targets): {summary.get('trending_unknown', 0)}\n"
-        f"Top 5 current: {', '.join(all_rows_sample)}\n"
         f"Reports: s3://{STAGE_BUCKET}/{prefix}\n"
         f"Errors: {errors}"
     )
@@ -204,10 +180,7 @@ def lambda_handler(event, context):
         Subject=f"OTT Trending Keywords Report {dt}",
         Message=message,
     )
-    logger.info(
-        f"Trending report complete — all:{summary.get('trending_all',0)} "
-        f"unknown:{summary.get('trending_unknown',0)} errors:{errors} mode:{mode}"
-    )
+    logger.info(f"Trending report complete — unknown:{summary.get('trending_unknown',0)} errors:{errors} mode:{mode}")
     return {
         "dt": dt,
         "mode": mode,

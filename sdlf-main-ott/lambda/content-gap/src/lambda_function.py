@@ -33,15 +33,6 @@ QUERIES = {
         ORDER BY abandoned DESC
         LIMIT 500
     """,
-    "genre_demand_30d": """
-        SELECT derived_genre,
-               COUNT(*) AS total_searches,
-               ROUND(100.0 * COUNT(*) / CAST(SUM(COUNT(*)) OVER () AS double), 1) AS share_pct
-        FROM {db}.curated
-        WHERE dt >= DATE_FORMAT(CURRENT_DATE - INTERVAL '30' DAY, '%Y-%m-%d')
-        GROUP BY derived_genre
-        ORDER BY total_searches DESC
-    """,
     "premium_vs_free": """
         SELECT derived_genre,
                COUNT(*) AS total_searches,
@@ -62,14 +53,6 @@ QUERIES = {
         FROM {db}.curated
         GROUP BY derived_genre
         ORDER BY repeat_pct DESC
-    """,
-    "platform_demand_7d": """
-        SELECT platform_group, derived_genre,
-               COUNT(*) AS searches
-        FROM {db}.curated
-        WHERE dt >= DATE_FORMAT(CURRENT_DATE - INTERVAL '7' DAY, '%Y-%m-%d')
-        GROUP BY platform_group, derived_genre
-        ORDER BY platform_group, searches DESC
     """,
     "hour_of_day_heatmap": """
         SELECT hour_of_day_vn,
@@ -92,19 +75,6 @@ QUERIES = {
         WHERE derived_genre != 'UNKNOWN'
         GROUP BY derived_genre
         ORDER BY guest_share_pct DESC
-    """,
-    "network_abandon_rate": """
-        SELECT network_type_norm,
-               COUNT(*) AS total_searches,
-               SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END) AS abandoned,
-               ROUND(100.0 * SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END)
-                     / CAST(COUNT(*) AS double), 1) AS abandon_rate_pct,
-               derived_genre,
-               ROUND(100.0 * COUNT(*) / CAST(SUM(COUNT(*)) OVER (PARTITION BY network_type_norm) AS double), 1) AS genre_share_pct
-        FROM {db}.curated
-        WHERE derived_genre != 'UNKNOWN'
-        GROUP BY network_type_norm, derived_genre
-        ORDER BY network_type_norm, total_searches DESC
     """,
 }
 
@@ -173,10 +143,10 @@ def lambda_handler(event, context):
     message = (
         f"OTT Content Gap Report — {dt}\n"
         f"Content gaps (abandoned keywords): {summary.get('content_gaps', 0)}\n"
-        f"Genre demand 30d: {summary.get('genre_demand_30d', 0)} genres\n"
         f"Premium vs free: {summary.get('premium_vs_free', 0)} genres\n"
         f"Repeat search rate: {summary.get('repeat_search_rate', 0)} genres\n"
-        f"Platform demand 7d: {summary.get('platform_demand_7d', 0)} rows\n"
+        f"Hour heatmap: {summary.get('hour_of_day_heatmap', 0)} rows\n"
+        f"Guest vs auth: {summary.get('guest_vs_auth_demand', 0)} genres\n"
         f"Reports: s3://{STAGE_BUCKET}/{prefix}\n"
         f"Errors: {errors}"
     )
