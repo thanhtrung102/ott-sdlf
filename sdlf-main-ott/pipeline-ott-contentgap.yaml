@@ -103,6 +103,19 @@ Resources:
                   - sns:Publish
                 Resource:
                   - !Ref pSnsTopicArn
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt rContentGapDlq.Arn
+
+  ######## SQS DLQ ########
+
+  rContentGapDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: sdlf-ott-mainCG-dlq
+      MessageRetentionPeriod: 1209600
+      KmsMasterKeyId: !Ref pKmsKeyArn
 
   ######## CLOUDWATCH LOGS ########
 
@@ -313,6 +326,16 @@ Resources:
               sns.publish(TopicArn=SNS_TOPIC_ARN, Subject=f"OTT Content Gap Report {dt}", Message=message)
               logger.info(f"Report complete — {sum(v for v in summary.values() if v>0)} total rows, {errors} errors")
               return {"dt": dt, "reports": summary, "prefix": f"s3://{STAGE_BUCKET}/{prefix}", "report_url": report_url, "errors": errors}
+
+  rContentGapEventInvokeConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: !Ref rContentGapFunction
+      Qualifier: $LATEST
+      MaximumRetryAttempts: 1
+      DestinationConfig:
+        OnFailure:
+          Destination: !GetAtt rContentGapDlq.Arn
 
   rContentGapPermission:
     Type: AWS::Lambda::Permission

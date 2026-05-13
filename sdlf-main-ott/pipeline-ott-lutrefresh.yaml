@@ -113,6 +113,19 @@ Resources:
                 Action:
                   - bedrock:InvokeModel
                 Resource: "*"
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt rLutRefreshDlq.Arn
+
+  ######## SQS DLQ ########
+
+  rLutRefreshDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: sdlf-ott-mainLUT-dlq
+      MessageRetentionPeriod: 1209600
+      KmsMasterKeyId: !Ref pKmsKeyArn
 
   ######## CLOUDWATCH LOGS ########
 
@@ -307,6 +320,16 @@ Resources:
               lut_clean = {k: v for k,v in lut.items() if v != "UNKNOWN"}
               save_lut(lut_clean)
               return {"classified": classified, "lut_size": len(lut_clean), "errors": errors}
+
+  rLutRefreshEventInvokeConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: !Ref rLutRefreshFunction
+      Qualifier: $LATEST
+      MaximumRetryAttempts: 1
+      DestinationConfig:
+        OnFailure:
+          Destination: !GetAtt rLutRefreshDlq.Arn
 
   rLutRefreshPermission:
     Type: AWS::Lambda::Permission

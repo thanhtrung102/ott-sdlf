@@ -149,6 +149,19 @@ Resources:
                   - events:PutEvents
                 Resource:
                   - !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/default
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt rTrendingDlq.Arn
+
+  ######## SQS DLQ ########
+
+  rTrendingDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: sdlf-ott-mainTR-dlq
+      MessageRetentionPeriod: 1209600
+      KmsMasterKeyId: !Ref pKmsKeyArn
 
   ######## CLOUDWATCH LOGS ########
 
@@ -384,6 +397,16 @@ Resources:
               events.put_events(Entries=[{"Source": "sdlf.ott.trending", "DetailType": "Trending Report Completed", "Detail": json.dumps(result)}])
               logger.info(f"Trending complete — all:{summary.get('trending_all',0)} unknown:{summary.get('trending_unknown',0)} gold:{summary.get('gold_rows',0)} errors:{errors}")
               return result
+
+  rTrendingEventInvokeConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: !Ref rTrendingFunction
+      Qualifier: $LATEST
+      MaximumRetryAttempts: 1
+      DestinationConfig:
+        OnFailure:
+          Destination: !GetAtt rTrendingDlq.Arn
 
   rTrendingPermission:
     Type: AWS::Lambda::Permission

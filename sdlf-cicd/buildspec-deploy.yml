@@ -43,7 +43,10 @@ phases:
           pDatasetName=searchevents \
           pArtifactsBucket=ott-search-${ACCOUNT}-prod \
           pKmsKeyArn=${KMS_KEY} \
-          pPipelineDeploymentInstance=mainB
+          pPipelineDeploymentInstance=mainB \
+          pRawBucket=/sdlf/storage/rRawBucket/prod \
+          pStageBucket=/sdlf/storage/rStageBucket/prod \
+          pAnalyticsBucket=/sdlf/storage/rAnalyticsBucket/prod
 
         deploy sdlf-pipeline-ott-mainA sdlf-main-ott/pipeline-ott-mainA.yaml
 

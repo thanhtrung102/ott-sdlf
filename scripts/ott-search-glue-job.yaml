@@ -15,6 +15,18 @@ Parameters:
   pArtifactsBucket:
     Type: String
     Description: S3 bucket that holds the Glue script and extra-py-files zip
+  pRawBucket:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/storage/rRawBucket/prod
+    Description: Raw S3 bucket
+  pStageBucket:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/storage/rStageBucket/prod
+    Description: Stage S3 bucket
+  pAnalyticsBucket:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/storage/rAnalyticsBucket/prod
+    Description: Analytics S3 bucket
   pKmsKeyArn:
     Type: String
     Description: KMS key ARN used for S3 SSE-KMS on the data bucket
@@ -37,13 +49,36 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSGlueServiceRole
-        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonS3FullAccess
-        - !Sub arn:${AWS::Partition}:iam::aws:policy/CloudWatchLogsFullAccess
       Policies:
-        - PolicyName: !Sub sdlf-${pTeamName}-${pDatasetName}-kms-policy
+        - PolicyName: !Sub sdlf-${pTeamName}-${pDatasetName}-policy
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${pArtifactsBucket}/artifacts/*
+                  - !Sub arn:${AWS::Partition}:s3:::${pRawBucket}/${pTeamName}/${pDatasetName}/*
+                  - !Sub arn:${AWS::Partition}:s3:::${pStageBucket}/${pTeamName}/${pDatasetName}/*
+                  - !Sub arn:${AWS::Partition}:s3:::${pAnalyticsBucket}/${pTeamName}/${pDatasetName}/*
+              - Effect: Allow
+                Action:
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${pArtifactsBucket}
+                  - !Sub arn:${AWS::Partition}:s3:::${pRawBucket}
+                  - !Sub arn:${AWS::Partition}:s3:::${pStageBucket}
+                  - !Sub arn:${AWS::Partition}:s3:::${pAnalyticsBucket}
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws-glue/*
               - Effect: Allow
                 Action:
                   - kms:CreateGrant

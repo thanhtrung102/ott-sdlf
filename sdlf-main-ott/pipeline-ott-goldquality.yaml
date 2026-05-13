@@ -23,6 +23,10 @@ Parameters:
   pKmsKeyArn:
     Type: AWS::SSM::Parameter::Value<String>
     Default: /sdlf/storage/rKMSKey/prod
+  pGoldCrawlerName:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/dataset/rAnalyticsGlueCrawler/searchevents
+    Description: Glue crawler to refresh the gold Glue catalog after DQ passes
 
 Resources:
 
@@ -62,6 +66,11 @@ Resources:
                   - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:catalog
                   - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/${pGoldDatabaseName}
                   - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/${pGoldDatabaseName}/*
+              - Effect: Allow
+                Action:
+                  - glue:StartCrawler
+                Resource:
+                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:crawler/${pGoldCrawlerName}
               - Effect: Allow
                 Action:
                   - iam:PassRole
@@ -306,7 +315,7 @@ Resources:
                   {
                     "Variable": "$.evaluation_status.Status",
                     "StringEquals": "SUCCEEDED",
-                    "Next": "DQSucceeded"
+                    "Next": "StartGoldCrawler"
                   },
                   {
                     "Variable": "$.evaluation_status.Status",
@@ -315,6 +324,23 @@ Resources:
                   }
                 ],
                 "Default": "WaitForEvaluation"
+              },
+              "StartGoldCrawler": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::aws-sdk:glue:startCrawler",
+                "Parameters": {
+                  "Name": "${pGoldCrawlerName}"
+                },
+                "ResultPath": null,
+                "Retry": [
+                  {
+                    "ErrorEquals": ["Glue.CrawlerRunningException"],
+                    "IntervalSeconds": 30,
+                    "MaxAttempts": 6,
+                    "BackoffRate": 2
+                  }
+                ],
+                "Next": "DQSucceeded"
               },
               "DQSucceeded": {
                 "Type": "Succeed"
