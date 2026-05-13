@@ -326,6 +326,19 @@ Resources:
                   - lambda:DeleteFunctionEventInvokeConfig
                   - lambda:GetFunctionEventInvokeConfig
                 Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:sdlf-ott-*
+              - Sid: ApiGateway
+                Effect: Allow
+                Action:
+                  - apigateway:DELETE
+                  - apigateway:GET
+                  - apigateway:PATCH
+                  - apigateway:POST
+                  - apigateway:PUT
+                  - apigateway:TagResource
+                  - apigateway:UntagResource
+                Resource:
+                  - !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}::/apis
+                  - !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}::/apis/*
               - Sid: SSMWrite
                 Effect: Allow
                 Action:

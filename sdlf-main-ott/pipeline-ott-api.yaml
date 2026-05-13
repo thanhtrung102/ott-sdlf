@@ -1,0 +1,229 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  OTT Analytics HTTP API — GET /trending and GET /content-gaps
+  served from the latest S3 analytics CSVs produced by the Trending
+  and ContentGap Lambdas.  Supports ?limit=N (max 500) and ?date=YYYY-MM-DD.
+
+Parameters:
+  pPipelineReference:
+    Type: String
+    Default: none
+  pStageBucket:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/storage/rStageBucket/prod
+  pKmsKeyArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/storage/rKMSKey/prod
+  pTopN:
+    Type: Number
+    Default: 50
+    Description: Default row limit when ?limit is not specified
+
+Resources:
+
+  ######## IAM ########
+
+  rApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sdlf-ott-api-role
+      Path: /sdlf-ott/
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: sdlf-ott-api-policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: Logs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/sdlf-ott-api:*
+              - Sid: S3List
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !Sub arn:${AWS::Partition}:s3:::${pStageBucket}
+                Condition:
+                  StringLike:
+                    s3:prefix:
+                      - analytics/trending/*
+                      - analytics/content-gap/*
+              - Sid: S3Read
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${pStageBucket}/analytics/trending/*
+                  - !Sub arn:${AWS::Partition}:s3:::${pStageBucket}/analytics/content-gap/*
+              - Sid: KMS
+                Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource: !Ref pKmsKeyArn
+
+  ######## LAMBDA ########
+
+  rApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/sdlf-ott-api
+      RetentionInDays: 30
+
+  rApiFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: rApiLogGroup
+    Properties:
+      FunctionName: sdlf-ott-api
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt rApiRole.Arn
+      Timeout: 30
+      MemorySize: 128
+      Environment:
+        Variables:
+          STAGE_BUCKET: !Ref pStageBucket
+          TOP_N: !Ref pTopN
+      Code:
+        ZipFile: |
+          import csv, io, json, os
+          import boto3
+
+          s3 = boto3.client("s3")
+          BUCKET = os.environ["STAGE_BUCKET"]
+          TOP_N = int(os.environ.get("TOP_N", "50"))
+
+          def latest_date_prefix(base):
+              resp = s3.list_objects_v2(Bucket=BUCKET, Prefix=base, Delimiter="/")
+              folders = sorted(p["Prefix"] for p in resp.get("CommonPrefixes", []))
+              return folders[-1] if folders else None
+
+          def read_csv(key, limit):
+              obj = s3.get_object(Bucket=BUCKET, Key=key)
+              reader = csv.DictReader(io.StringIO(obj["Body"].read().decode("utf-8")))
+              return [row for _, row in zip(range(limit), reader)]
+
+          def ok(rows):
+              return {
+                  "statusCode": 200,
+                  "headers": {"Content-Type": "application/json"},
+                  "body": json.dumps(rows),
+              }
+
+          def err(code, msg):
+              return {"statusCode": code, "body": json.dumps({"error": msg})}
+
+          def handler(event, context):
+              path = event.get("rawPath", "")
+              qs = event.get("queryStringParameters") or {}
+              try:
+                  limit = min(int(qs.get("limit", TOP_N)), 500)
+              except (ValueError, TypeError):
+                  return err(400, "limit must be an integer")
+              date = qs.get("date")
+
+              try:
+                  if path == "/trending":
+                      base = "analytics/trending/"
+                      prefix = f"{base}{date}/" if date else latest_date_prefix(base)
+                      if not prefix:
+                          return err(404, "No trending data available yet")
+                      rows = read_csv(f"{prefix}trending_all.csv", limit)
+                      return ok(rows)
+
+                  elif path == "/content-gaps":
+                      base = "analytics/content-gap/"
+                      prefix = f"{base}{date}/" if date else latest_date_prefix(base)
+                      if not prefix:
+                          return err(404, "No content-gap data available yet")
+                      rows = read_csv(f"{prefix}content_gaps.csv", limit)
+                      return ok(rows)
+
+                  else:
+                      return err(404, "Not found — use /trending or /content-gaps")
+
+              except Exception as exc:
+                  return err(500, str(exc))
+
+  ######## HTTP API ########
+
+  rHttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: sdlf-ott-api
+      ProtocolType: HTTP
+      Description: OTT analytics — trending keywords and content gap reports
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowMethods:
+          - GET
+        AllowHeaders:
+          - Content-Type
+
+  rApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref rHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt rApiFunction.Arn
+      PayloadFormatVersion: "2.0"
+
+  rTrendingRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref rHttpApi
+      RouteKey: GET /trending
+      Target: !Sub integrations/${rApiIntegration}
+
+  rContentGapsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref rHttpApi
+      RouteKey: GET /content-gaps
+      Target: !Sub integrations/${rApiIntegration}
+
+  rApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref rHttpApi
+      StageName: $default
+      AutoDeploy: true
+
+  rApiLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt rApiFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${rHttpApi}/*/*
+
+  ######## SSM ########
+
+  rApiUrlSsm:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /sdlf/pipeline/rApiUrl/ott
+      Type: String
+      Value: !Sub https://${rHttpApi}.execute-api.${AWS::Region}.amazonaws.com
+      Description: OTT Analytics HTTP API base URL
+
+Outputs:
+  oPipelineReference:
+    Value: !Ref pPipelineReference
+  oApiUrl:
+    Description: Base URL — append /trending or /content-gaps
+    Value: !Sub https://${rHttpApi}.execute-api.${AWS::Region}.amazonaws.com
+  oTrendingEndpoint:
+    Value: !Sub https://${rHttpApi}.execute-api.${AWS::Region}.amazonaws.com/trending
+  oContentGapsEndpoint:
+    Value: !Sub https://${rHttpApi}.execute-api.${AWS::Region}.amazonaws.com/content-gaps
