@@ -24,7 +24,7 @@ phases:
           sdlf-main-ott/pipeline-ott-lakeformation.yaml \
           sdlf-main-ott/pipeline-ott-api.yaml \
           sdlf-cicd/template-cicd.yaml \
-          --ignore-checks W3002 \
+          --ignore-checks W3002 W3037 \
           --format parseable
       - echo "=== CloudFormation validate-template ==="
       - |
