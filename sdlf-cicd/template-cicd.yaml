@@ -251,7 +251,20 @@ Resources:
                   - logs:CreateLogGroup
                   - logs:DeleteLogGroup
                   - logs:PutRetentionPolicy
-                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/sdlf-ott-*
+                  - logs:TagLogGroup
+                  - logs:ListTagsLogGroup
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/sdlf-ott-*
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/states/sdlf-ott-*
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:sdlf-ott-*
+              - Sid: LogsDescribe
+                Effect: Allow
+                Action:
+                  - logs:DescribeLogGroups
+                  - logs:DescribeResourcePolicies
+                  - logs:PutResourcePolicy
+                  - logs:DeleteResourcePolicy
+                Resource: "*"
               - Sid: Glue
                 Effect: Allow
                 Action:
