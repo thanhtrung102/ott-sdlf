@@ -152,6 +152,7 @@ Resources:
                 Effect: Allow
                 Action:
                   - cloudformation:ValidateTemplate
+                  - cloudformation:GetTemplateSummary
                 Resource: "*"
               - Sid: IAM
                 Effect: Allow
