@@ -1,0 +1,48 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - pip install cfn-lint --quiet
+
+  build:
+    commands:
+      - echo "=== cfn-lint ==="
+      - |
+        cfn-lint \
+          scripts/ott-search-glue-job.yaml \
+          sdlf-main-ott/pipeline-ott-mainA.yaml \
+          sdlf-main-ott/pipeline-ott-mainB.yaml \
+          sdlf-main-ott/pipeline-ott-dataquality.yaml \
+          sdlf-main-ott/pipeline-ott-lutrefresh.yaml \
+          sdlf-main-ott/pipeline-ott-contentgap.yaml \
+          sdlf-main-ott/pipeline-ott-trending.yaml \
+          sdlf-main-ott/pipeline-ott-monitoring.yaml \
+          sdlf-cicd/template-cicd.yaml \
+          --ignore-checks W3002 \
+          --format parseable
+      - echo "=== CloudFormation validate-template ==="
+      - |
+        for template in \
+          scripts/ott-search-glue-job.yaml \
+          sdlf-main-ott/pipeline-ott-mainA.yaml \
+          sdlf-main-ott/pipeline-ott-mainB.yaml \
+          sdlf-main-ott/pipeline-ott-dataquality.yaml \
+          sdlf-main-ott/pipeline-ott-lutrefresh.yaml \
+          sdlf-main-ott/pipeline-ott-contentgap.yaml \
+          sdlf-main-ott/pipeline-ott-trending.yaml \
+          sdlf-main-ott/pipeline-ott-monitoring.yaml; do
+          echo "Validating $template..."
+          aws cloudformation validate-template \
+            --template-body file://$template \
+            --region $AWS_DEFAULT_REGION \
+            --query "Parameters[*].ParameterKey" \
+            --output text
+        done
+      - echo "Validation complete."
+
+artifacts:
+  files:
+    - "**/*"

@@ -1,0 +1,574 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  OTT SDLF AWS-native CI/CD — CodePipeline (Source -> Validate -> Deploy) backed
+  by CodeStar GitHub connection and two CodeBuild projects. Every deployed stack is
+  stamped with pPipelineReference=<execution-id> following the SDLF convention.
+  Deploy once: aws cloudformation deploy --template-file sdlf-cicd/template-cicd.yaml
+    --stack-name sdlf-ott-cicd --capabilities CAPABILITY_NAMED_IAM --region ap-southeast-1
+
+Parameters:
+  pPipelineReference:
+    Type: String
+    Default: none
+  pGitHubOwner:
+    Type: String
+    Default: thanhtrung102
+  pGitHubRepo:
+    Type: String
+    Default: ott-sdlf
+  pGitHubBranch:
+    Type: String
+    Default: main
+  pNotificationEmail:
+    Type: String
+    Default: thanhtrungnsl2003@gmail.com
+  pBedrockModelId:
+    Type: String
+    Default: global.anthropic.claude-haiku-4-5-20251001-v1:0
+  pMaxNewKeywords:
+    Type: Number
+    Default: 15000
+
+Resources:
+
+  ######## ARTIFACTS BUCKET ########
+
+  rArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub sdlf-ott-cicd-artifacts-${AWS::AccountId}
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  rArtifactsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref rArtifactsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !GetAtt rArtifactsBucket.Arn
+              - !Sub ${rArtifactsBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
+  ######## NOTIFICATIONS ########
+
+  rCICDTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: sdlf-ott-cicd-notifications
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref pNotificationEmail
+
+  ######## CODESTAR CONNECTION ########
+
+  rGitHubConnection:
+    Type: AWS::CodeStarConnections::Connection
+    Properties:
+      ConnectionName: sdlf-ott-github
+      ProviderType: GitHub
+
+  ######## IAM — CODEBUILD ########
+
+  rCodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sdlf-ott-cicd-codebuild
+      Path: /sdlf-ott/
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: sdlf-ott-cicd-codebuild
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: Logs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/sdlf-ott-cicd-*:*
+              - Sid: Artifacts
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                Resource: !Sub ${rArtifactsBucket.Arn}/*
+              - Sid: ArtifactsBucketList
+                Effect: Allow
+                Action:
+                  - s3:GetBucketAcl
+                  - s3:GetBucketLocation
+                Resource: !GetAtt rArtifactsBucket.Arn
+              - Sid: SSM
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/sdlf/*
+              - Sid: CloudFormationDeploy
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:GetTemplate
+                  - cloudformation:ValidateTemplate
+                Resource: !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sdlf-*
+              - Sid: CloudFormationValidateGlobal
+                Effect: Allow
+                Action:
+                  - cloudformation:ValidateTemplate
+                Resource: "*"
+              - Sid: IAM
+                Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRole
+                  - iam:GetRolePolicy
+                  - iam:PassRole
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:UpdateRole
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sdlf-ott/*
+              - Sid: Lambda
+                Effect: Allow
+                Action:
+                  - lambda:CreateFunction
+                  - lambda:UpdateFunctionCode
+                  - lambda:UpdateFunctionConfiguration
+                  - lambda:DeleteFunction
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:AddPermission
+                  - lambda:RemovePermission
+                  - lambda:TagResource
+                  - lambda:ListTags
+                Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:sdlf-ott-*
+              - Sid: StepFunctions
+                Effect: Allow
+                Action:
+                  - states:CreateStateMachine
+                  - states:UpdateStateMachine
+                  - states:DeleteStateMachine
+                  - states:DescribeStateMachine
+                  - states:TagResource
+                Resource: !Sub arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:sdlf-ott-*
+              - Sid: EventBridge
+                Effect: Allow
+                Action:
+                  - events:PutRule
+                  - events:DeleteRule
+                  - events:DescribeRule
+                  - events:PutTargets
+                  - events:RemoveTargets
+                  - events:TagResource
+                Resource: !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/sdlf-ott-*
+              - Sid: CloudWatch
+                Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricAlarm
+                  - cloudwatch:DeleteAlarms
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:PutDashboard
+                  - cloudwatch:DeleteDashboards
+                Resource: "*"
+              - Sid: Logs2
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
+                  - logs:PutRetentionPolicy
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/sdlf-ott-*
+              - Sid: Glue
+                Effect: Allow
+                Action:
+                  - glue:CreateJob
+                  - glue:UpdateJob
+                  - glue:DeleteJob
+                  - glue:GetJob
+                  - glue:TagResource
+                Resource: !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:job/sdlf-ott-*
+              - Sid: SSMWrite
+                Effect: Allow
+                Action:
+                  - ssm:PutParameter
+                  - ssm:DeleteParameter
+                  - ssm:AddTagsToResource
+                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/sdlf/*
+
+  ######## IAM — CODEPIPELINE ########
+
+  rPipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sdlf-ott-cicd-pipeline
+      Path: /sdlf-ott/
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: sdlf-ott-cicd-pipeline
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                  - s3:GetBucketVersioning
+                Resource:
+                  - !GetAtt rArtifactsBucket.Arn
+                  - !Sub ${rArtifactsBucket.Arn}/*
+              - Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                Resource:
+                  - !GetAtt rValidateProject.Arn
+                  - !GetAtt rDeployProject.Arn
+              - Effect: Allow
+                Action:
+                  - codestar-connections:UseConnection
+                Resource: !Ref rGitHubConnection
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref rCICDTopic
+
+  ######## CODEBUILD — VALIDATE ########
+
+  rValidateLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/codebuild/sdlf-ott-cicd-validate
+      RetentionInDays: 30
+
+  rValidateProject:
+    Type: AWS::CodeBuild::Project
+    DependsOn: rValidateLogGroup
+    Properties:
+      Name: sdlf-ott-cicd-validate
+      Description: Lint and validate all OTT SDLF CloudFormation templates
+      ServiceRole: !GetAtt rCodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: sdlf-cicd/buildspec-validate.yml
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: /aws/codebuild/sdlf-ott-cicd-validate
+
+  ######## CODEBUILD — DEPLOY ########
+
+  rDeployLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/codebuild/sdlf-ott-cicd-deploy
+      RetentionInDays: 30
+
+  rDeployProject:
+    Type: AWS::CodeBuild::Project
+    DependsOn: rDeployLogGroup
+    Properties:
+      Name: sdlf-ott-cicd-deploy
+      Description: Deploy all OTT SDLF stacks in dependency order
+      ServiceRole: !GetAtt rCodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - Name: BEDROCK_MODEL_ID
+            Value: !Ref pBedrockModelId
+          - Name: MAX_NEW_KEYWORDS
+            Value: !Sub "${pMaxNewKeywords}"
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: sdlf-cicd/buildspec-deploy.yml
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: /aws/codebuild/sdlf-ott-cicd-deploy
+
+  ######## CODEPIPELINE ########
+
+  rPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: sdlf-ott-cicd
+      RoleArn: !GetAtt rPipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref rArtifactsBucket
+      Stages:
+
+        - Name: Source
+          Actions:
+            - Name: GitHub
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: "1"
+              Configuration:
+                ConnectionArn: !Ref rGitHubConnection
+                FullRepositoryId: !Sub ${pGitHubOwner}/${pGitHubRepo}
+                BranchName: !Ref pGitHubBranch
+                OutputArtifactFormat: CODE_ZIP
+                DetectChanges: true
+              OutputArtifacts:
+                - Name: SourceArtifact
+
+        - Name: Validate
+          Actions:
+            - Name: LintAndValidate
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref rValidateProject
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: ValidatedArtifact
+
+        - Name: Deploy
+          Actions:
+            - Name: DeployStacks
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref rDeployProject
+                EnvironmentVariables: !Sub |
+                  [{"name":"PIPELINE_REFERENCE","value":"#{codepipeline.PipelineExecutionId}","type":"PLAINTEXT"}]
+              InputArtifacts:
+                - Name: ValidatedArtifact
+
+        - Name: Notify
+          Actions:
+            - Name: PublishSummary
+              ActionTypeId:
+                Category: Invoke
+                Owner: AWS
+                Provider: Lambda
+                Version: "1"
+              Configuration:
+                FunctionName: !Ref rNotifyFunction
+              InputArtifacts:
+                - Name: ValidatedArtifact
+
+  ######## PIPELINE FAILURE NOTIFICATION ########
+
+  rPipelineEventRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sdlf-ott-cicd-events
+      Path: /sdlf-ott/
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: sdlf-ott-cicd-events
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref rCICDTopic
+
+  rPipelineFailureRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: sdlf-ott-cicd-failure
+      Description: Notify on pipeline failure
+      EventPattern: !Sub |
+        {
+          "source": ["aws.codepipeline"],
+          "detail-type": ["CodePipeline Pipeline Execution State Change"],
+          "detail": {
+            "pipeline": ["sdlf-ott-cicd"],
+            "state": ["FAILED"]
+          }
+        }
+      State: ENABLED
+      Targets:
+        - Id: sdlf-ott-cicd-sns
+          Arn: !Ref rCICDTopic
+          InputTransformer:
+            InputPathsMap:
+              pipeline: "$.detail.pipeline"
+              state: "$.detail.state"
+              execution: "$.detail.execution-id"
+            InputTemplate: |
+              "OTT SDLF Pipeline <pipeline> <state> (execution: <execution>). Check CodePipeline console for details."
+
+  ######## NOTIFY LAMBDA (success summary) ########
+
+  rNotifyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sdlf-ott-cicd-notify
+      Path: /sdlf-ott/
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: sdlf-ott-cicd-notify
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/sdlf-ott-cicd-notify:*
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref rCICDTopic
+              - Effect: Allow
+                Action: codepipeline:PutJobSuccessResult
+                Resource: "*"
+
+  rNotifyLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/sdlf-ott-cicd-notify
+      RetentionInDays: 30
+
+  rNotifyFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: rNotifyLogGroup
+    Properties:
+      FunctionName: sdlf-ott-cicd-notify
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt rNotifyRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !Ref rCICDTopic
+      Code:
+        ZipFile: |
+          import os, boto3
+          sns = boto3.client("sns")
+          cp  = boto3.client("codepipeline")
+
+          def lambda_handler(event, context):
+              job_id = event["CodePipeline.job"]["id"]
+              try:
+                  sns.publish(
+                      TopicArn=os.environ["SNS_TOPIC_ARN"],
+                      Subject="OTT SDLF Pipeline — Deploy succeeded",
+                      Message="All OTT SDLF stacks deployed successfully via CodePipeline sdlf-ott-cicd.",
+                  )
+                  cp.put_job_success_result(jobId=job_id)
+              except Exception as e:
+                  cp.put_job_failure_result(jobId=job_id, failureDetails={"type":"JobFailed","message":str(e)})
+                  raise
+
+  ######## SSM ########
+
+  rPipelineArnSsm:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /sdlf/cicd/ott/PipelineArn
+      Type: String
+      Value: !Sub arn:${AWS::Partition}:codepipeline:${AWS::Region}:${AWS::AccountId}:sdlf-ott-cicd
+      Description: ARN of the OTT SDLF CodePipeline
+
+  rConnectionArnSsm:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /sdlf/cicd/ott/GitHubConnectionArn
+      Type: String
+      Value: !Ref rGitHubConnection
+      Description: CodeStar connection ARN — must be AVAILABLE before pipeline runs
+
+Outputs:
+  oPipelineReference:
+    Value: !Ref pPipelineReference
+  oPipelineName:
+    Value: !Ref rPipeline
+  oConnectionArn:
+    Description: Complete GitHub connection in AWS Console before first run
+    Value: !Ref rGitHubConnection
+  oConnectionConsoleUrl:
+    Description: Direct link to approve the GitHub connection
+    Value: !Sub https://${AWS::Region}.console.aws.amazon.com/codesuite/settings/connections
+  oArtifactsBucket:
+    Value: !Ref rArtifactsBucket

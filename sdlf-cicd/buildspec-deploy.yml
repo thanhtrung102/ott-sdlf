@@ -1,0 +1,86 @@
+version: 0.2
+
+# SDLF convention: every stack is stamped with pPipelineReference so you can
+# trace exactly which CodePipeline execution deployed which stack version.
+
+env:
+  variables:
+    REGION: ap-southeast-1
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+
+  pre_build:
+    commands:
+      - echo "Execution $PIPELINE_REFERENCE starting"
+      - KMS_KEY=$(aws ssm get-parameter --name "/sdlf/storage/rKMSKey/prod" --query "Parameter.Value" --output text --region $REGION)
+      - ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+      - echo "Account $ACCOUNT  KMS $KMS_KEY"
+
+  build:
+    commands:
+      - |
+        deploy() {
+          local stack=$1; local template=$2; shift 2
+          echo ""
+          echo "--- Deploying $stack ---"
+          aws cloudformation deploy \
+            --template-file "$template" \
+            --stack-name "$stack" \
+            --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
+            --no-fail-on-empty-changeset \
+            --region $REGION \
+            --parameter-overrides pPipelineReference=$PIPELINE_REFERENCE "$@"
+          echo "$stack OK"
+        }
+
+      - deploy sdlf-ott-searchevents-glue-job scripts/ott-search-glue-job.yaml
+          pTeamName=ott
+          pDatasetName=searchevents
+          pArtifactsBucket=ott-search-${ACCOUNT}-prod
+          pKmsKeyArn=${KMS_KEY}
+          pPipelineDeploymentInstance=mainB
+
+      - deploy sdlf-pipeline-ott-mainA sdlf-main-ott/pipeline-ott-mainA.yaml
+
+      - deploy sdlf-pipeline-ott-mainB sdlf-main-ott/pipeline-ott-mainB.yaml
+
+      - deploy sdlf-pipeline-ott-dataquality sdlf-main-ott/pipeline-ott-dataquality.yaml
+
+      - deploy sdlf-pipeline-ott-lutrefresh sdlf-main-ott/pipeline-ott-lutrefresh.yaml
+          pMaxNewKeywords=${MAX_NEW_KEYWORDS}
+          pBedrockModelId=${BEDROCK_MODEL_ID}
+
+      - deploy sdlf-pipeline-ott-contentgap sdlf-main-ott/pipeline-ott-contentgap.yaml
+
+      - deploy sdlf-pipeline-ott-trending sdlf-main-ott/pipeline-ott-trending.yaml
+
+      - deploy sdlf-pipeline-ott-monitoring sdlf-main-ott/pipeline-ott-monitoring.yaml
+
+  post_build:
+    commands:
+      - echo ""
+      - echo "All stacks deployed. Verifying stack statuses..."
+      - |
+        for stack in \
+          sdlf-ott-searchevents-glue-job \
+          sdlf-pipeline-ott-mainA \
+          sdlf-pipeline-ott-mainB \
+          sdlf-pipeline-ott-dataquality \
+          sdlf-pipeline-ott-lutrefresh \
+          sdlf-pipeline-ott-contentgap \
+          sdlf-pipeline-ott-trending \
+          sdlf-pipeline-ott-monitoring; do
+          STATUS=$(aws cloudformation describe-stacks \
+            --stack-name $stack --region $REGION \
+            --query "Stacks[0].StackStatus" --output text 2>/dev/null || echo "NOT_FOUND")
+          echo "$stack: $STATUS"
+          case $STATUS in
+            *_COMPLETE) ;;
+            *) echo "ERROR: $stack in unexpected state $STATUS"; exit 1 ;;
+          esac
+        done
+      - echo ""
+      - echo "Deploy $PIPELINE_REFERENCE complete."
