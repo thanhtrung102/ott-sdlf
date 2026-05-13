@@ -328,6 +328,10 @@ Resources:
                 Action:
                   - sns:Publish
                 Resource: !Ref rCICDTopic
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !GetAtt rNotifyFunction.Arn
 
   ######## CODEBUILD — VALIDATE ########
 
