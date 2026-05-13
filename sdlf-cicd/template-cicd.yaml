@@ -28,6 +28,10 @@ Parameters:
   pMaxNewKeywords:
     Type: Number
     Default: 15000
+  pGitHubConnectionArn:
+    Type: String
+    Default: arn:aws:codeconnections:ap-southeast-1:703668403514:connection/ded02dc6-83bf-40a0-a3a6-b35e971132d4
+    Description: ARN of an AVAILABLE CodeConnections/CodeStar connection to GitHub
 
 Resources:
 
@@ -76,13 +80,10 @@ Resources:
         - Protocol: email
           Endpoint: !Ref pNotificationEmail
 
-  ######## CODESTAR CONNECTION ########
-
-  rGitHubConnection:
-    Type: AWS::CodeStarConnections::Connection
-    Properties:
-      ConnectionName: sdlf-ott-github
-      ProviderType: GitHub
+  ######## CODESTAR CONNECTION (pre-created manually, referenced by ARN) ########
+  # Connection must be AVAILABLE before the pipeline runs.
+  # To create: AWS Console -> CodePipeline -> Settings -> Connections -> Create connection (GitHub)
+  # then pass the ARN via pGitHubConnectionArn.
 
   ######## IAM — CODEBUILD ########
 
@@ -277,7 +278,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - codestar-connections:UseConnection
-                Resource: !Ref rGitHubConnection
+                Resource: !Ref pGitHubConnectionArn
               - Effect: Allow
                 Action:
                   - sns:Publish
@@ -369,7 +370,7 @@ Resources:
                 Provider: CodeStarSourceConnection
                 Version: "1"
               Configuration:
-                ConnectionArn: !Ref rGitHubConnection
+                ConnectionArn: !Ref pGitHubConnectionArn
                 FullRepositoryId: !Sub ${pGitHubOwner}/${pGitHubRepo}
                 BranchName: !Ref pGitHubBranch
                 OutputArtifactFormat: CODE_ZIP
@@ -402,7 +403,7 @@ Resources:
                 Version: "1"
               Configuration:
                 ProjectName: !Ref rDeployProject
-                EnvironmentVariables: !Sub |
+                EnvironmentVariables: |
                   [{"name":"PIPELINE_REFERENCE","value":"#{codepipeline.PipelineExecutionId}","type":"PLAINTEXT"}]
               InputArtifacts:
                 - Name: ValidatedArtifact
@@ -448,7 +449,7 @@ Resources:
     Properties:
       Name: sdlf-ott-cicd-failure
       Description: Notify on pipeline failure
-      EventPattern: !Sub |
+      EventPattern: |
         {
           "source": ["aws.codepipeline"],
           "detail-type": ["CodePipeline Pipeline Execution State Change"],
@@ -556,7 +557,7 @@ Resources:
     Properties:
       Name: /sdlf/cicd/ott/GitHubConnectionArn
       Type: String
-      Value: !Ref rGitHubConnection
+      Value: !Ref pGitHubConnectionArn
       Description: CodeStar connection ARN — must be AVAILABLE before pipeline runs
 
 Outputs:
@@ -566,7 +567,7 @@ Outputs:
     Value: !Ref rPipeline
   oConnectionArn:
     Description: Complete GitHub connection in AWS Console before first run
-    Value: !Ref rGitHubConnection
+    Value: !Ref pGitHubConnectionArn
   oConnectionConsoleUrl:
     Description: Direct link to approve the GitHub connection
     Value: !Sub https://${AWS::Region}.console.aws.amazon.com/codesuite/settings/connections
