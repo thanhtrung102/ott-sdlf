@@ -132,6 +132,12 @@ Resources:
                 Action:
                   - s3:GetObject
                 Resource: !Sub arn:${AWS::Partition}:s3:::sdlf-${AWS::Region}-${AWS::AccountId}-sdlf-main-cicd-cfn-artifacts/*
+              - Sid: SDLFModuleTemplatesKMS
+                Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource: !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/fe3a491b-60ab-4b3d-8792-f518d4cf587f
               - Sid: SSM
                 Effect: Allow
                 Action:
