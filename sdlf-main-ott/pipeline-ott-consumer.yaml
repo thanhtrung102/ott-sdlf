@@ -1,0 +1,149 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  OTT data consumer layer — five Athena Named Queries saved to the sdlf-ott
+  workgroup for direct analyst access, plus an SNS email subscription that
+  delivers a post-run summary after every pipeline execution.
+
+Parameters:
+  pPipelineReference:
+    Type: String
+    Default: none
+  pDatabaseName:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/dataset/rAnalyticsGlueDataCatalog/searchevents
+  pAthenaWorkgroup:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /SDLF/Athena/ott/WorkgroupName
+  pSnsTopicArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /SDLF/SNS/ott/Notifications
+  pNotificationEmail:
+    Type: String
+    Default: thanhtrungnsl2003@gmail.com
+    Description: Email address to receive post-run pipeline summaries
+
+Resources:
+
+  ######## SNS EMAIL SUBSCRIPTION ########
+
+  rEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref pSnsTopicArn
+      Protocol: email
+      Endpoint: !Ref pNotificationEmail
+
+  ######## ATHENA NAMED QUERIES ########
+
+  rQueryContentGaps:
+    Type: AWS::Athena::NamedQuery
+    Properties:
+      Name: ott-content-gaps
+      Description: "Top abandoned keywords by genre — acquisition shortlist. High abandoned + high abandon_rate_pct = content missing from platform."
+      WorkGroup: !Ref pAthenaWorkgroup
+      Database: !Ref pDatabaseName
+      QueryString: !Sub |
+        -- Top abandoned keywords by genre (acquisition shortlist)
+        -- High abandoned + high abandon_rate_pct = title missing from platform
+        SELECT keyword_norm,
+               derived_genre,
+               COUNT(*)                                                                    AS searches,
+               SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END)                       AS abandoned,
+               ROUND(100.0 * SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END)
+                     / CAST(COUNT(*) AS double), 1)                                        AS abandon_rate_pct
+        FROM ${pDatabaseName}.curated
+        WHERE derived_genre != 'UNKNOWN'
+          AND is_search_abandoned = true
+        GROUP BY keyword_norm, derived_genre
+        ORDER BY abandoned DESC
+        LIMIT 500
+
+  rQueryPremiumVsFree:
+    Type: AWS::Athena::NamedQuery
+    Properties:
+      Name: ott-premium-vs-free
+      Description: "Genre demand split by user tier — high premium_share_pct genres justify higher licensing spend."
+      WorkGroup: !Ref pAthenaWorkgroup
+      Database: !Ref pDatabaseName
+      QueryString: !Sub |
+        -- Genre demand by user tier (licensing ROI signal)
+        -- High premium_share_pct = paying users want this content most
+        SELECT derived_genre,
+               COUNT(*)                                                                          AS total_searches,
+               SUM(CASE WHEN has_premium THEN 1 ELSE 0 END)                                    AS premium_searches,
+               SUM(CASE WHEN NOT has_premium THEN 1 ELSE 0 END)                                AS free_searches,
+               ROUND(100.0 * SUM(CASE WHEN has_premium THEN 1 ELSE 0 END)
+                     / CAST(COUNT(*) AS double), 1)                                             AS premium_share_pct
+        FROM ${pDatabaseName}.curated
+        GROUP BY derived_genre
+        ORDER BY premium_share_pct DESC
+
+  rQueryRepeatSearchRate:
+    Type: AWS::Athena::NamedQuery
+    Properties:
+      Name: ott-repeat-search-rate
+      Description: "Repeat search rate by genre — high repeat_pct means users keep searching and not finding. Content or UX problem."
+      WorkGroup: !Ref pAthenaWorkgroup
+      Database: !Ref pDatabaseName
+      QueryString: !Sub |
+        -- Repeat search rate by genre (user frustration signal)
+        -- High repeat_pct = users search the same thing repeatedly without finding it
+        SELECT derived_genre,
+               COUNT(*)                                                                          AS total_searches,
+               SUM(CASE WHEN is_repeat_search THEN 1 ELSE 0 END)                               AS repeat_searches,
+               ROUND(100.0 * SUM(CASE WHEN is_repeat_search THEN 1 ELSE 0 END)
+                     / CAST(COUNT(*) AS double), 1)                                             AS repeat_pct
+        FROM ${pDatabaseName}.curated
+        GROUP BY derived_genre
+        ORDER BY repeat_pct DESC
+
+  rQueryHourOfDayHeatmap:
+    Type: AWS::Athena::NamedQuery
+    Properties:
+      Name: ott-hour-of-day-heatmap
+      Description: "Search volume by hour and genre (Vietnam time) — use pct_of_genre to find peak hours per genre for notification scheduling."
+      WorkGroup: !Ref pAthenaWorkgroup
+      Database: !Ref pDatabaseName
+      QueryString: !Sub |
+        -- Search volume by hour x genre, Vietnam timezone (notification scheduling)
+        -- pct_of_genre shows share of that genre's daily searches at each hour
+        SELECT hour_of_day_vn,
+               derived_genre,
+               COUNT(*)                                                                          AS searches,
+               ROUND(100.0 * COUNT(*) / CAST(SUM(COUNT(*)) OVER (PARTITION BY derived_genre) AS double), 1) AS pct_of_genre
+        FROM ${pDatabaseName}.curated
+        WHERE derived_genre != 'UNKNOWN'
+        GROUP BY hour_of_day_vn, derived_genre
+        ORDER BY derived_genre, hour_of_day_vn
+
+  rQueryGuestVsAuthDemand:
+    Type: AWS::Athena::NamedQuery
+    Properties:
+      Name: ott-guest-vs-auth-demand
+      Description: "Guest vs authenticated search share by genre — high guest_share_pct genres are strongest login-gate conversion opportunities."
+      WorkGroup: !Ref pAthenaWorkgroup
+      Database: !Ref pDatabaseName
+      QueryString: !Sub |
+        -- Guest vs authenticated demand by genre (login-gate conversion signal)
+        -- High guest_share_pct = many unauthenticated users want this content -> gate it
+        SELECT derived_genre,
+               COUNT(*)                                                                          AS total_searches,
+               SUM(CASE WHEN user_is_authenticated THEN 1 ELSE 0 END)                          AS auth_searches,
+               SUM(CASE WHEN NOT user_is_authenticated THEN 1 ELSE 0 END)                      AS guest_searches,
+               ROUND(100.0 * SUM(CASE WHEN NOT user_is_authenticated THEN 1 ELSE 0 END)
+                     / CAST(COUNT(*) AS double), 1)                                             AS guest_share_pct
+        FROM ${pDatabaseName}.curated
+        WHERE derived_genre != 'UNKNOWN'
+        GROUP BY derived_genre
+        ORDER BY guest_share_pct DESC
+
+Outputs:
+  oPipelineReference:
+    Description: CodePipeline reference this stack has been deployed with
+    Value: !Ref pPipelineReference
+  oAthenaWorkgroup:
+    Description: Athena workgroup where named queries are saved
+    Value: !Ref pAthenaWorkgroup
+  oAthenaConsoleUrl:
+    Description: Direct link to saved queries in Athena console
+    Value: !Sub https://${AWS::Region}.console.aws.amazon.com/athena/home?region=${AWS::Region}#/query-editor/history
