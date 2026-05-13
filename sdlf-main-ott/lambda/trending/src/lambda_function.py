@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import os
 import time
 from datetime import date, timedelta
@@ -9,9 +10,10 @@ from datalake_library.commons import init_logger
 
 logger = init_logger(__name__)
 
-athena = boto3.client("athena")
-s3     = boto3.client("s3")
-sns    = boto3.client("sns")
+athena  = boto3.client("athena")
+s3      = boto3.client("s3")
+sns     = boto3.client("sns")
+events  = boto3.client("events")
 
 DB               = os.environ["ATHENA_DATABASE"]
 RESULTS          = os.environ["ATHENA_RESULTS"]
@@ -53,11 +55,6 @@ ORDER BY c.current_cnt DESC
 LIMIT 1000
 """
 
-_BASELINE_CHECK_SQL = """
-SELECT COUNT(*) AS cnt FROM {db}.curated
-WHERE dt >= '{base_start}' AND dt < '{base_end}'
-"""
-
 _FALLBACK_SQL = """
 SELECT keyword_norm, derived_genre, COUNT(*) AS current_cnt,
        0 AS baseline_cnt, NULL AS growth_multiplier, 'true' AS is_new_keyword
@@ -68,6 +65,86 @@ GROUP BY keyword_norm, derived_genre
 HAVING COUNT(*) >= {min_volume}
 ORDER BY current_cnt DESC
 LIMIT 1000
+"""
+
+_BASELINE_CHECK_SQL = """
+SELECT COUNT(*) AS cnt FROM {db}.curated
+WHERE dt >= '{base_start}' AND dt < '{base_end}'
+"""
+
+# Gold-layer CTAS: per-keyword x platform x genre x date rankings.
+# Drops and recreates the external table each run so the gold layer
+# reflects the most recent full-history aggregation.
+_GOLD_DROP_SQL = "DROP TABLE IF EXISTS {gold_db}.keyword_trends"
+
+_GOLD_CTAS_SQL = """
+CREATE TABLE {gold_db}.keyword_trends
+WITH (
+    format              = 'PARQUET',
+    parquet_compression = 'SNAPPY',
+    external_location   = '{gold_location}'
+)
+AS
+WITH agg AS (
+    SELECT
+        keyword_norm,
+        platform_group,
+        derived_genre,
+        dt                                                                 AS trend_date,
+        CAST(COUNT(*)                                           AS bigint) AS search_count,
+        CAST(SUM(CASE WHEN session_action = 'enter' THEN 1 ELSE 0 END)
+                                                                AS bigint) AS enter_count,
+        CAST(SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END)
+                                                                AS bigint) AS abandoned_count,
+        ROUND(CAST(SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END) AS double)
+              / CAST(COUNT(*) AS double), 4)                              AS abandonment_rate,
+        CAST(COUNT(DISTINCT user_id_hashed)                     AS bigint) AS unique_users
+    FROM {curated_db}.curated
+    GROUP BY keyword_norm, platform_group, derived_genre, dt
+    HAVING COUNT(*) >= {min_volume}
+),
+ranked AS (
+    SELECT *,
+        CAST(RANK() OVER (
+            PARTITION BY platform_group, derived_genre, trend_date
+            ORDER BY search_count DESC
+        ) AS integer) AS rank_today
+    FROM agg
+),
+prev_agg AS (
+    SELECT
+        keyword_norm,
+        platform_group,
+        derived_genre,
+        dt                                                                 AS trend_date_7d,
+        CAST(RANK() OVER (
+            PARTITION BY platform_group, derived_genre, dt
+            ORDER BY COUNT(*) DESC
+        ) AS integer) AS rank_prev
+    FROM {curated_db}.curated
+    GROUP BY keyword_norm, platform_group, derived_genre, dt
+    HAVING COUNT(*) >= {min_volume}
+)
+SELECT
+    r.keyword_norm,
+    r.platform_group,
+    r.derived_genre,
+    r.search_count,
+    r.enter_count,
+    r.abandoned_count,
+    r.abandonment_rate,
+    r.unique_users,
+    r.rank_today,
+    COALESCE(p.rank_prev, -1)                                 AS rank_7d_ago,
+    CASE WHEN p.rank_prev IS NULL THEN true ELSE false END    AS is_new_entrant,
+    COALESCE(p.rank_prev - r.rank_today, 0)                   AS rank_delta,
+    r.trend_date
+FROM ranked r
+LEFT JOIN prev_agg p
+       ON r.keyword_norm   = p.keyword_norm
+      AND r.platform_group = p.platform_group
+      AND r.derived_genre  = p.derived_genre
+      AND date_diff('day', date(p.trend_date_7d), date(r.trend_date)) = 7
 """
 
 
@@ -96,6 +173,22 @@ def athena_query(sql):
     return headers or [], rows
 
 
+def athena_ddl(sql):
+    """Run a DDL statement (no result rows expected)."""
+    r = athena.start_query_execution(
+        QueryString=sql,
+        ResultConfiguration={"OutputLocation": RESULTS},
+    )
+    qid = r["QueryExecutionId"]
+    while True:
+        st = athena.get_query_execution(QueryExecutionId=qid)["QueryExecution"]["Status"]["State"]
+        if st == "SUCCEEDED":
+            return
+        if st in ("FAILED", "CANCELLED"):
+            raise RuntimeError(f"DDL {st}: {qid}")
+        time.sleep(3)
+
+
 def write_csv(key, headers, rows):
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=headers)
@@ -111,7 +204,7 @@ def write_csv(key, headers, rows):
     return len(rows)
 
 
-def has_baseline_data(cur_end, base_start, base_end):
+def has_baseline_data(base_start, base_end):
     sql = _BASELINE_CHECK_SQL.format(db=DB, base_start=base_start, base_end=base_end)
     _, rows = athena_query(sql)
     return rows and int(rows[0].get("cnt", 0)) > 0
@@ -133,6 +226,28 @@ def run_trending_query(cur_start, cur_end, base_start, base_end, use_fallback, g
     return athena_query(sql)
 
 
+def write_gold_table():
+    gold_db       = os.environ.get("GOLD_DATABASE", "sdlf_ott_gold")
+    gold_location = os.environ.get("GOLD_LOCATION", "")
+    if not gold_location:
+        logger.warning("GOLD_LOCATION not set — skipping gold table write")
+        return 0
+
+    logger.info(f"Writing gold table {gold_db}.keyword_trends -> {gold_location}")
+    athena_ddl(_GOLD_DROP_SQL.format(gold_db=gold_db))
+    ctas = _GOLD_CTAS_SQL.format(
+        gold_db=gold_db,
+        gold_location=gold_location,
+        curated_db=DB,
+        min_volume=MIN_VOLUME,
+    )
+    athena_ddl(ctas)
+    _, count_rows = athena_query(f"SELECT COUNT(*) AS cnt FROM {gold_db}.keyword_trends")
+    count = int(count_rows[0]["cnt"]) if count_rows else 0
+    logger.info(f"Gold table written: {count} rows")
+    return count
+
+
 def lambda_handler(event, context):
     logger.info(
         f"Trending report triggered — source: {event.get('source', '?')} "
@@ -147,7 +262,7 @@ def lambda_handler(event, context):
     dt = str(today)
     prefix = f"{ANALYTICS_PREFIX}{dt}/"
 
-    use_fallback = not has_baseline_data(cur_end, base_start, base_end)
+    use_fallback = not has_baseline_data(base_start, base_end)
     if use_fallback:
         logger.warning("No baseline data found (< 4 weeks of pipeline runs) — using volume-only fallback")
     else:
@@ -155,23 +270,35 @@ def lambda_handler(event, context):
 
     summary, errors = {}, 0
 
+    for name, genre_filter in [
+        ("trending_all",     ""),
+        ("trending_unknown", "AND c.derived_genre = 'UNKNOWN'" if not use_fallback
+                             else "AND derived_genre = 'UNKNOWN'"),
+    ]:
+        try:
+            headers, rows = run_trending_query(
+                cur_start, cur_end, base_start, base_end, use_fallback, genre_filter,
+            )
+            summary[name] = write_csv(f"{prefix}{name}.csv", headers, rows)
+        except Exception as e:
+            logger.error(f"{name} failed: {e}")
+            summary[name] = -1
+            errors += 1
+
     try:
-        headers, rows = run_trending_query(
-            cur_start, cur_end, base_start, base_end, use_fallback,
-            genre_filter="AND c.derived_genre = 'UNKNOWN'" if not use_fallback
-                         else "AND derived_genre = 'UNKNOWN'",
-        )
-        summary["trending_unknown"] = write_csv(f"{prefix}trending_unknown.csv", headers, rows)
+        summary["gold_rows"] = write_gold_table()
     except Exception as e:
-        logger.error(f"trending_unknown failed: {e}")
-        summary["trending_unknown"] = -1
+        logger.error(f"Gold table write failed: {e}")
+        summary["gold_rows"] = -1
         errors += 1
 
     mode = "fallback/volume-only" if use_fallback else f"growth >={MIN_GROWTH}x"
     message = (
         f"OTT Trending Keywords Report — {dt}\n"
         f"Mode: {mode}\n"
+        f"Trending keywords (all genres): {summary.get('trending_all', 0)}\n"
         f"Trending UNKNOWN (LUT targets): {summary.get('trending_unknown', 0)}\n"
+        f"Gold table rows written: {summary.get('gold_rows', 0)}\n"
         f"Reports: s3://{STAGE_BUCKET}/{prefix}\n"
         f"Errors: {errors}"
     )
@@ -180,11 +307,21 @@ def lambda_handler(event, context):
         Subject=f"OTT Trending Keywords Report {dt}",
         Message=message,
     )
-    logger.info(f"Trending report complete — unknown:{summary.get('trending_unknown',0)} errors:{errors} mode:{mode}")
-    return {
+    result = {
         "dt": dt,
         "mode": mode,
         "reports": summary,
         "prefix": f"s3://{STAGE_BUCKET}/{prefix}",
         "errors": errors,
     }
+    events.put_events(Entries=[{
+        "Source": "sdlf.ott.trending",
+        "DetailType": "Trending Report Completed",
+        "Detail": json.dumps(result),
+    }])
+    logger.info(
+        f"Trending report complete — all:{summary.get('trending_all',0)} "
+        f"unknown:{summary.get('trending_unknown',0)} "
+        f"gold:{summary.get('gold_rows',0)} errors:{errors} mode:{mode}"
+    )
+    return result

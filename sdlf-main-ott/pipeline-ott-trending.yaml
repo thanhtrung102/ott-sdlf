@@ -38,6 +38,14 @@ Parameters:
   pKmsKeyArn:
     Type: AWS::SSM::Parameter::Value<String>
     Default: /sdlf/storage/rKMSKey/prod
+  pGoldDatabaseName:
+    Type: String
+    Default: sdlf_ott_gold
+    Description: Glue database for the gold keyword_trends table
+  pGoldBucket:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/storage/rStageBucket/prod
+    Description: S3 bucket that holds the gold layer (may differ from stage bucket)
 
 Resources:
 
@@ -99,6 +107,30 @@ Resources:
                   - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/${pDatabaseName}/*
               - Effect: Allow
                 Action:
+                  - glue:GetDatabase
+                  - glue:GetTable
+                  - glue:CreateTable
+                  - glue:DeleteTable
+                  - glue:UpdateTable
+                Resource:
+                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:catalog
+                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/${pGoldDatabaseName}
+                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/${pGoldDatabaseName}/*
+              - Effect: Allow
+                Action:
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${pGoldBucket}
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${pGoldBucket}/ott/searchevents/gold/*
+              - Effect: Allow
+                Action:
                   - lakeformation:GetDataAccess
                 Resource: "*"
               - Effect: Allow
@@ -112,6 +144,11 @@ Resources:
                   - sns:Publish
                 Resource:
                   - !Ref pSnsTopicArn
+              - Effect: Allow
+                Action:
+                  - events:PutEvents
+                Resource:
+                  - !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/default
 
   ######## CLOUDWATCH LOGS ########
 
@@ -144,6 +181,8 @@ Resources:
           SNS_TOPIC_ARN: !Ref pSnsTopicArn
           MIN_GROWTH_MULTIPLIER: !Sub "${pMinGrowthMultiplier}"
           MIN_SEARCH_VOLUME: !Sub "${pMinSearchVolume}"
+          GOLD_DATABASE: !Ref pGoldDatabaseName
+          GOLD_LOCATION: !Sub s3://${pGoldBucket}/ott/searchevents/gold/keyword_trends/
           TEAM: ott
           PIPELINE: main
           PIPELINE_STAGE: Trending
@@ -152,15 +191,16 @@ Resources:
           # Source of truth: lambda/trending/src/lambda_function.py
           # Kept inline for self-contained CFN deployment.
           # Update both files together when making code changes.
-          import csv, io, os, time
+          import csv, io, json, os, time
           from datetime import date, timedelta
           import boto3
           from datalake_library.commons import init_logger
 
           logger = init_logger(__name__)
-          athena = boto3.client("athena")
-          s3     = boto3.client("s3")
-          sns    = boto3.client("sns")
+          athena  = boto3.client("athena")
+          s3      = boto3.client("s3")
+          sns     = boto3.client("sns")
+          events  = boto3.client("events")
 
           DB               = os.environ["ATHENA_DATABASE"]
           RESULTS          = os.environ["ATHENA_RESULTS"]
@@ -208,6 +248,45 @@ Resources:
           ORDER BY current_cnt DESC LIMIT 1000
           """
 
+          _GOLD_DROP_SQL = "DROP TABLE IF EXISTS {gold_db}.keyword_trends"
+
+          _GOLD_CTAS_SQL = """
+          CREATE TABLE {gold_db}.keyword_trends
+          WITH (format='PARQUET', parquet_compression='SNAPPY', external_location='{gold_location}')
+          AS
+          WITH agg AS (
+              SELECT keyword_norm, platform_group, derived_genre, dt AS trend_date,
+                     CAST(COUNT(*) AS bigint) AS search_count,
+                     CAST(SUM(CASE WHEN session_action='enter' THEN 1 ELSE 0 END) AS bigint) AS enter_count,
+                     CAST(SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END) AS bigint) AS abandoned_count,
+                     ROUND(CAST(SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END) AS double)/CAST(COUNT(*) AS double),4) AS abandonment_rate,
+                     CAST(COUNT(DISTINCT user_id_hashed) AS bigint) AS unique_users
+              FROM {curated_db}.curated
+              GROUP BY keyword_norm, platform_group, derived_genre, dt
+              HAVING COUNT(*) >= {min_volume}
+          ),
+          ranked AS (
+              SELECT *, CAST(RANK() OVER (PARTITION BY platform_group, derived_genre, trend_date ORDER BY search_count DESC) AS integer) AS rank_today
+              FROM agg
+          ),
+          prev_agg AS (
+              SELECT keyword_norm, platform_group, derived_genre, dt AS trend_date_7d,
+                     CAST(RANK() OVER (PARTITION BY platform_group, derived_genre, dt ORDER BY COUNT(*) DESC) AS integer) AS rank_prev
+              FROM {curated_db}.curated
+              GROUP BY keyword_norm, platform_group, derived_genre, dt
+              HAVING COUNT(*) >= {min_volume}
+          )
+          SELECT r.keyword_norm, r.platform_group, r.derived_genre,
+                 r.search_count, r.enter_count, r.abandoned_count, r.abandonment_rate, r.unique_users,
+                 r.rank_today, COALESCE(p.rank_prev,-1) AS rank_7d_ago,
+                 CASE WHEN p.rank_prev IS NULL THEN true ELSE false END AS is_new_entrant,
+                 COALESCE(p.rank_prev - r.rank_today, 0) AS rank_delta, r.trend_date
+          FROM ranked r
+          LEFT JOIN prev_agg p ON r.keyword_norm=p.keyword_norm AND r.platform_group=p.platform_group
+                                AND r.derived_genre=p.derived_genre
+                                AND date_diff('day', date(p.trend_date_7d), date(r.trend_date))=7
+          """
+
           def athena_query(sql):
               r = athena.start_query_execution(
                   QueryString=sql, QueryExecutionContext={"Database": DB},
@@ -227,6 +306,15 @@ Resources:
                       rows.append(dict(zip(headers, values)))
               return headers or [], rows
 
+          def athena_ddl(sql):
+              r = athena.start_query_execution(QueryString=sql, ResultConfiguration={"OutputLocation": RESULTS})
+              qid = r["QueryExecutionId"]
+              while True:
+                  st = athena.get_query_execution(QueryExecutionId=qid)["QueryExecution"]["Status"]["State"]
+                  if st == "SUCCEEDED": return
+                  if st in ("FAILED","CANCELLED"): raise RuntimeError(f"DDL {st}: {qid}")
+                  time.sleep(3)
+
           def write_csv(key, headers, rows):
               buf = io.StringIO()
               writer = csv.DictWriter(buf, fieldnames=headers)
@@ -239,6 +327,19 @@ Resources:
               sql = f"SELECT COUNT(*) AS cnt FROM {DB}.curated WHERE dt >= '{base_start}' AND dt < '{base_end}'"
               _, rows = athena_query(sql)
               return rows and int(rows[0].get("cnt", 0)) > 0
+
+          def write_gold_table():
+              gold_db = os.environ.get("GOLD_DATABASE", "sdlf_ott_gold")
+              gold_location = os.environ.get("GOLD_LOCATION", "")
+              if not gold_location:
+                  logger.warning("GOLD_LOCATION not set — skipping gold table write")
+                  return 0
+              athena_ddl(_GOLD_DROP_SQL.format(gold_db=gold_db))
+              athena_ddl(_GOLD_CTAS_SQL.format(gold_db=gold_db, gold_location=gold_location, curated_db=DB, min_volume=MIN_VOLUME))
+              _, count_rows = athena_query(f"SELECT COUNT(*) AS cnt FROM {gold_db}.keyword_trends")
+              count = int(count_rows[0]["cnt"]) if count_rows else 0
+              logger.info(f"Gold table written: {count} rows")
+              return count
 
           def run_query(cur_start, cur_end, base_start, base_end, use_fallback, genre_filter=""):
               if use_fallback:
@@ -266,16 +367,23 @@ Resources:
                       summary[name] = write_csv(f"{prefix}{name}.csv", headers, rows)
                   except Exception as e:
                       logger.error(f"{name} failed: {e}"); summary[name] = -1; errors += 1
+              try:
+                  summary["gold_rows"] = write_gold_table()
+              except Exception as e:
+                  logger.error(f"Gold table write failed: {e}"); summary["gold_rows"] = -1; errors += 1
               mode = "fallback/volume-only" if use_fallback else f"growth >={MIN_GROWTH}x"
               message = (
                   f"OTT Trending Keywords Report — {dt}\nMode: {mode}\n"
                   f"Trending keywords (all genres): {summary.get('trending_all',0)}\n"
                   f"Trending UNKNOWN (LUT targets): {summary.get('trending_unknown',0)}\n"
+                  f"Gold table rows written: {summary.get('gold_rows',0)}\n"
                   f"Reports: s3://{STAGE_BUCKET}/{prefix}\nErrors: {errors}"
               )
               sns.publish(TopicArn=SNS_TOPIC_ARN, Subject=f"OTT Trending Keywords Report {dt}", Message=message)
-              logger.info(f"Trending complete — all:{summary.get('trending_all',0)} unknown:{summary.get('trending_unknown',0)} errors:{errors}")
-              return {"dt": dt, "mode": mode, "reports": summary, "prefix": f"s3://{STAGE_BUCKET}/{prefix}", "errors": errors}
+              result = {"dt": dt, "mode": mode, "reports": summary, "prefix": f"s3://{STAGE_BUCKET}/{prefix}", "errors": errors}
+              events.put_events(Entries=[{"Source": "sdlf.ott.trending", "DetailType": "Trending Report Completed", "Detail": json.dumps(result)}])
+              logger.info(f"Trending complete — all:{summary.get('trending_all',0)} unknown:{summary.get('trending_unknown',0)} gold:{summary.get('gold_rows',0)} errors:{errors}")
+              return result
 
   rTrendingPermission:
     Type: AWS::Lambda::Permission

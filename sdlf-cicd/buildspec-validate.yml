@@ -19,6 +19,7 @@ phases:
           sdlf-main-ott/pipeline-ott-lutrefresh.yaml \
           sdlf-main-ott/pipeline-ott-contentgap.yaml \
           sdlf-main-ott/pipeline-ott-trending.yaml \
+          sdlf-main-ott/pipeline-ott-goldquality.yaml \
           sdlf-main-ott/pipeline-ott-monitoring.yaml \
           sdlf-cicd/template-cicd.yaml \
           --ignore-checks W3002 \
@@ -33,6 +34,7 @@ phases:
           sdlf-main-ott/pipeline-ott-lutrefresh.yaml \
           sdlf-main-ott/pipeline-ott-contentgap.yaml \
           sdlf-main-ott/pipeline-ott-trending.yaml \
+          sdlf-main-ott/pipeline-ott-goldquality.yaml \
           sdlf-main-ott/pipeline-ott-monitoring.yaml; do
           echo "Validating $template..."
           aws cloudformation validate-template \

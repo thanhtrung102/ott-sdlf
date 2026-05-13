@@ -59,6 +59,8 @@ phases:
 
         deploy sdlf-pipeline-ott-trending sdlf-main-ott/pipeline-ott-trending.yaml
 
+        deploy sdlf-pipeline-ott-goldquality sdlf-main-ott/pipeline-ott-goldquality.yaml
+
         deploy sdlf-pipeline-ott-monitoring sdlf-main-ott/pipeline-ott-monitoring.yaml
 
   post_build:
@@ -74,6 +76,7 @@ phases:
           sdlf-pipeline-ott-lutrefresh \
           sdlf-pipeline-ott-contentgap \
           sdlf-pipeline-ott-trending \
+          sdlf-pipeline-ott-goldquality \
           sdlf-pipeline-ott-monitoring; do
           STATUS=$(aws cloudformation describe-stacks \
             --stack-name $stack --region $REGION \

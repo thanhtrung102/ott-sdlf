@@ -1,0 +1,368 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  OTT Gold Layer Data Quality — Glue DQ checks on sdlf_ott_gold.keyword_trends
+  after every Trending Lambda run. Triggered by the custom EventBridge event
+  emitted by the Trending Lambda (source: sdlf.ott.trending).
+  Source: pipeline-ott-goldquality.yaml
+
+Parameters:
+  pPipelineReference:
+    Type: String
+    Default: none
+  pGoldDatabaseName:
+    Type: String
+    Default: sdlf_ott_gold
+    Description: Glue database for the gold keyword_trends table
+  pGoldBucket:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/storage/rStageBucket/prod
+    Description: S3 bucket that holds the gold layer
+  pStageBucket:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/storage/rStageBucket/prod
+  pKmsKeyArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/storage/rKMSKey/prod
+
+Resources:
+
+  ######## IAM ########
+
+  rGoldDQExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /sdlf-ott/
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: !Sub states.${AWS::Region}.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: sdlf-ott-goldquality-sm
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - glue:StartDataQualityRuleRecommendationRun
+                  - glue:GetDataQualityRuleRecommendationRun
+                  - glue:StartDataQualityRulesetEvaluationRun
+                  - glue:GetDataQualityRulesetEvaluationRun
+                Resource: !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:dataQualityRuleset/*
+              - Effect: Allow
+                Action:
+                  - glue:GetTable
+                  - glue:GetDatabase
+                Resource:
+                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:catalog
+                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/${pGoldDatabaseName}
+                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/${pGoldDatabaseName}/*
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !GetAtt rGlueDQRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: glue.amazonaws.com
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutLogEvents
+                  - logs:PutResourcePolicy
+                  - logs:CreateLogGroup
+                  - logs:DescribeLogGroups
+                  - logs:DescribeResourcePolicies
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                  - xray:GetSamplingRules
+                  - xray:GetSamplingTargets
+                Resource: "*"
+
+  rGlueDQRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /sdlf-ott/
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: sdlf-ott-glue-gold-dq-s3
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${pStageBucket}/dq-results/ott/gold/*
+              - Effect: Allow
+                Action:
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${pStageBucket}
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${pGoldBucket}/ott/searchevents/gold/*
+              - Effect: Allow
+                Action:
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${pGoldBucket}
+              - Effect: Allow
+                Action:
+                  - glue:GetTable
+                  - glue:GetDatabase
+                  - glue:GetPartitions
+                Resource:
+                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:catalog
+                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/${pGoldDatabaseName}
+                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/${pGoldDatabaseName}/*
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource:
+                  - !Ref pKmsKeyArn
+              - Effect: Allow
+                Action:
+                  - lakeformation:GetDataAccess
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws-glue/*
+
+  rEventBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /sdlf-ott/
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: sdlf-ott-goldquality-eb-start-sm
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource:
+                  - !Ref rGoldDQStateMachine
+
+  ######## CLOUDWATCH LOGS ########
+
+  rGoldDQSmLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /sdlf/statemachine/ott-mainGoldDQ
+      RetentionInDays: 30
+
+  ######## STEP FUNCTIONS ########
+
+  rGoldDQStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: sdlf-ott-mainGoldDQ-sm
+      RoleArn: !GetAtt rGoldDQExecutionRole.Arn
+      LoggingConfiguration:
+        Level: ERROR
+        IncludeExecutionData: false
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt rGoldDQSmLogGroup.Arn
+      TracingConfiguration:
+        Enabled: true
+      DefinitionString: !Sub
+        - |
+          {
+            "Comment": "OTT Gold Layer Data Quality checks on sdlf_ott_gold.keyword_trends",
+            "StartAt": "StartRecommendationRun",
+            "States": {
+              "StartRecommendationRun": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::aws-sdk:glue:startDataQualityRuleRecommendationRun",
+                "Parameters": {
+                  "DataSource": {
+                    "GlueTable": {
+                      "DatabaseName": "${pGoldDatabaseName}",
+                      "TableName": "keyword_trends"
+                    }
+                  },
+                  "CreatedRulesetName": "${pGoldDatabaseName}_keyword_trends",
+                  "Role": "${GlueDQRoleArn}",
+                  "NumberOfWorkers": 5
+                },
+                "ResultPath": "$.recommendation_run",
+                "Next": "WaitForRecommendation",
+                "Catch": [
+                  {
+                    "ErrorEquals": ["Glue.InvalidInputException"],
+                    "Comment": "Ruleset already exists — skip to evaluation",
+                    "ResultPath": null,
+                    "Next": "StartEvaluationRun"
+                  }
+                ]
+              },
+              "WaitForRecommendation": {
+                "Type": "Wait",
+                "Seconds": 60,
+                "Next": "GetRecommendationStatus"
+              },
+              "GetRecommendationStatus": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::aws-sdk:glue:getDataQualityRuleRecommendationRun",
+                "Parameters": {
+                  "RunId.$": "$.recommendation_run.RunId"
+                },
+                "ResultPath": "$.recommendation_status",
+                "Next": "RecommendationComplete"
+              },
+              "RecommendationComplete": {
+                "Type": "Choice",
+                "Choices": [
+                  {
+                    "Variable": "$.recommendation_status.Status",
+                    "StringEquals": "SUCCEEDED",
+                    "Next": "StartEvaluationRun"
+                  },
+                  {
+                    "Variable": "$.recommendation_status.Status",
+                    "StringEquals": "FAILED",
+                    "Next": "DQFailed"
+                  }
+                ],
+                "Default": "WaitForRecommendation"
+              },
+              "StartEvaluationRun": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::aws-sdk:glue:startDataQualityRulesetEvaluationRun",
+                "Parameters": {
+                  "DataSource": {
+                    "GlueTable": {
+                      "DatabaseName": "${pGoldDatabaseName}",
+                      "TableName": "keyword_trends"
+                    }
+                  },
+                  "Role": "${GlueDQRoleArn}",
+                  "NumberOfWorkers": 5,
+                  "RulesetNames": ["${pGoldDatabaseName}_keyword_trends"],
+                  "AdditionalRunOptions": {
+                    "CloudWatchMetricsEnabled": true,
+                    "ResultsS3Prefix": "s3://${pStageBucket}/dq-results/ott/gold/"
+                  }
+                },
+                "ResultPath": "$.evaluation_run",
+                "Next": "WaitForEvaluation"
+              },
+              "WaitForEvaluation": {
+                "Type": "Wait",
+                "Seconds": 60,
+                "Next": "GetEvaluationStatus"
+              },
+              "GetEvaluationStatus": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::aws-sdk:glue:getDataQualityRulesetEvaluationRun",
+                "Parameters": {
+                  "RunId.$": "$.evaluation_run.RunId"
+                },
+                "ResultPath": "$.evaluation_status",
+                "Next": "EvaluationComplete"
+              },
+              "EvaluationComplete": {
+                "Type": "Choice",
+                "Choices": [
+                  {
+                    "Variable": "$.evaluation_status.Status",
+                    "StringEquals": "SUCCEEDED",
+                    "Next": "DQSucceeded"
+                  },
+                  {
+                    "Variable": "$.evaluation_status.Status",
+                    "StringEquals": "FAILED",
+                    "Next": "DQFailed"
+                  }
+                ],
+                "Default": "WaitForEvaluation"
+              },
+              "DQSucceeded": {
+                "Type": "Succeed"
+              },
+              "DQFailed": {
+                "Type": "Fail",
+                "Error": "GoldDataQualityCheckFailed",
+                "Cause": "Glue DQ evaluation failed on sdlf_ott_gold.keyword_trends"
+              }
+            }
+          }
+        - GlueDQRoleArn: !GetAtt rGlueDQRole.Arn
+
+  ######## EVENTBRIDGE ########
+
+  rGoldDQTriggerRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: sdlf-ott-mainGoldDQ-trigger
+      Description: Start Gold DQ SM when Trending Lambda completes
+      EventPattern:
+        source:
+          - sdlf.ott.trending
+        detail-type:
+          - Trending Report Completed
+      State: ENABLED
+      Targets:
+        - Id: sdlf-ott-mainGoldDQ-sm-target
+          Arn: !Ref rGoldDQStateMachine
+          RoleArn: !GetAtt rEventBridgeRole.Arn
+
+  ######## SSM ########
+
+  rGoldDQStateMachineSsm:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /sdlf/pipeline/rStateMachine/ott-mainGoldDQ
+      Type: String
+      Value: !Ref rGoldDQStateMachine
+      Description: ARN of the OTT Gold Layer Data Quality State Machine
+
+Outputs:
+  oPipelineReference:
+    Description: CodePipeline reference this stack has been deployed with
+    Value: !Ref pPipelineReference
+  oGoldDQStateMachineArn:
+    Description: ARN of the Gold DQ State Machine
+    Value: !Ref rGoldDQStateMachine
+  oTriggerRuleArn:
+    Description: EventBridge rule ARN
+    Value: !GetAtt rGoldDQTriggerRule.Arn
