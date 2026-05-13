@@ -444,6 +444,14 @@ Resources:
       Value: !GetAtt rTrendingFunction.Arn
       Description: ARN of the OTT Trending Keywords Lambda
 
+  rTrendingRoleSsm:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /sdlf/pipeline/rRole/ott-mainTR
+      Type: String
+      Value: !GetAtt rTrendingRole.Arn
+      Description: IAM role ARN for the OTT Trending Lambda (used by LF stack)
+
 Outputs:
   oPipelineReference:
     Description: CodePipeline reference this stack has been deployed with

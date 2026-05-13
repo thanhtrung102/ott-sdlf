@@ -1,0 +1,175 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  OTT Lake Formation column-level permissions — grants SELECT on the curated
+  table with user_id_hashed excluded for roles that do not need raw user
+  identifiers (ContentGap, LUT Refresh), and full SELECT for roles that
+  legitimately need the column (Trending, DQ, Crawler).
+
+  ACTIVATION NOTE: these grants are prepared but not enforced until
+  IAM_ALLOWED_PRINCIPALS is revoked by a Lake Formation administrator:
+    aws lakeformation revoke-permissions \
+      --principal '{"DataLakePrincipalIdentifier":"IAM_ALLOWED_PRINCIPALS"}' \
+      --resource '{"Table":{"CatalogId":"ACCOUNT","DatabaseName":"DB","Name":"curated"}}' \
+      --permissions SELECT --region ap-southeast-1
+
+Parameters:
+  pPipelineReference:
+    Type: String
+    Default: none
+  pDatabaseName:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/dataset/rAnalyticsGlueDataCatalog/searchevents
+  pCrawlerRoleArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/dataset/rDatalakeCrawlerRole/searchevents
+  pContentGapRoleArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/pipeline/rRole/ott-mainCG
+  pLutRefreshRoleArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/pipeline/rRole/ott-mainLUT
+  pTrendingRoleArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/pipeline/rRole/ott-mainTR
+  pDQExecRoleArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/pipeline/rRole/ott-mainDQExec
+  pDQGlueRoleArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/pipeline/rRole/ott-mainDQGlue
+
+Resources:
+
+  # ContentGap Lambda — queries curated for abandoned keywords but never
+  # needs the raw hashed user identifier.
+  rLFContentGap:
+    Type: AWS::LakeFormation::PrincipalPermissions
+    Properties:
+      Principal:
+        DataLakePrincipalIdentifier: !Ref pContentGapRoleArn
+      Resource:
+        TableWithColumns:
+          CatalogId: !Ref AWS::AccountId
+          DatabaseName: !Ref pDatabaseName
+          Name: curated
+          ColumnWildcard:
+            ExcludedColumnNames:
+              - user_id_hashed
+      Permissions:
+        - SELECT
+      PermissionsWithGrantOption: []
+
+  # LUT Refresh Lambda — queries UNKNOWN keywords but does not need
+  # user identity data.
+  rLFLutRefresh:
+    Type: AWS::LakeFormation::PrincipalPermissions
+    Properties:
+      Principal:
+        DataLakePrincipalIdentifier: !Ref pLutRefreshRoleArn
+      Resource:
+        TableWithColumns:
+          CatalogId: !Ref AWS::AccountId
+          DatabaseName: !Ref pDatabaseName
+          Name: curated
+          ColumnWildcard:
+            ExcludedColumnNames:
+              - user_id_hashed
+      Permissions:
+        - SELECT
+      PermissionsWithGrantOption: []
+
+  # Trending Lambda — requires user_id_hashed for COUNT(DISTINCT) unique_users.
+  rLFTrending:
+    Type: AWS::LakeFormation::PrincipalPermissions
+    Properties:
+      Principal:
+        DataLakePrincipalIdentifier: !Ref pTrendingRoleArn
+      Resource:
+        TableWithColumns:
+          CatalogId: !Ref AWS::AccountId
+          DatabaseName: !Ref pDatabaseName
+          Name: curated
+          ColumnWildcard: {}
+      Permissions:
+        - SELECT
+      PermissionsWithGrantOption: []
+
+  # DQ SM Execution role — orchestrates Glue DQ profile runs.
+  rLFDQExec:
+    Type: AWS::LakeFormation::PrincipalPermissions
+    Properties:
+      Principal:
+        DataLakePrincipalIdentifier: !Ref pDQExecRoleArn
+      Resource:
+        TableWithColumns:
+          CatalogId: !Ref AWS::AccountId
+          DatabaseName: !Ref pDatabaseName
+          Name: curated
+          ColumnWildcard: {}
+      Permissions:
+        - SELECT
+      PermissionsWithGrantOption: []
+
+  # Glue DQ role — runs data-quality profile scans over all curated columns.
+  rLFDQGlue:
+    Type: AWS::LakeFormation::PrincipalPermissions
+    Properties:
+      Principal:
+        DataLakePrincipalIdentifier: !Ref pDQGlueRoleArn
+      Resource:
+        TableWithColumns:
+          CatalogId: !Ref AWS::AccountId
+          DatabaseName: !Ref pDatabaseName
+          Name: curated
+          ColumnWildcard: {}
+      Permissions:
+        - SELECT
+      PermissionsWithGrantOption: []
+
+  # Crawler role — needs DESCRIBE to refresh the Glue catalog partition list.
+  rLFCrawler:
+    Type: AWS::LakeFormation::PrincipalPermissions
+    Properties:
+      Principal:
+        DataLakePrincipalIdentifier: !Ref pCrawlerRoleArn
+      Resource:
+        Table:
+          CatalogId: !Ref AWS::AccountId
+          DatabaseName: !Ref pDatabaseName
+          Name: curated
+      Permissions:
+        - ALTER
+        - DESCRIBE
+        - INSERT
+      PermissionsWithGrantOption: []
+
+  # Glue ETL job role — writes curated partitions directly to S3 (no catalog
+  # read needed), but grant SELECT so DQ runs on the same role path work.
+  rLFGlueJob:
+    Type: AWS::LakeFormation::PrincipalPermissions
+    Properties:
+      Principal:
+        DataLakePrincipalIdentifier: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/service-role/sdlf-ott-searchevents-glue-role
+      Resource:
+        TableWithColumns:
+          CatalogId: !Ref AWS::AccountId
+          DatabaseName: !Ref pDatabaseName
+          Name: curated
+          ColumnWildcard: {}
+      Permissions:
+        - SELECT
+        - INSERT
+        - ALTER
+      PermissionsWithGrantOption: []
+
+Outputs:
+  oPipelineReference:
+    Description: CodePipeline reference this stack was deployed with
+    Value: !Ref pPipelineReference
+  oActivationCommand:
+    Description: Run this command as a LF admin to enforce column-level restrictions
+    Value: !Sub >-
+      aws lakeformation revoke-permissions
+      --principal '{"DataLakePrincipalIdentifier":"IAM_ALLOWED_PRINCIPALS"}'
+      --resource '{"Table":{"CatalogId":"${AWS::AccountId}","DatabaseName":"${pDatabaseName}","Name":"curated"}}'
+      --permissions SELECT --region ${AWS::Region}

@@ -287,6 +287,17 @@ Resources:
                   - athena:UpdateWorkGroup
                   - athena:TagResource
                 Resource: !Sub arn:${AWS::Partition}:athena:${AWS::Region}:${AWS::AccountId}:workgroup/sdlf-*
+              - Sid: LakeFormation
+                Effect: Allow
+                Action:
+                  - lakeformation:GrantPermissions
+                  - lakeformation:BatchGrantPermissions
+                  - lakeformation:RevokePermissions
+                  - lakeformation:BatchRevokePermissions
+                  - lakeformation:ListPermissions
+                  - lakeformation:GetDataAccess
+                  - lakeformation:GetDataLakeSettings
+                Resource: "*"
               - Sid: SQS
                 Effect: Allow
                 Action:

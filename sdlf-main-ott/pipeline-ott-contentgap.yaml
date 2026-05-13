@@ -373,6 +373,14 @@ Resources:
       Value: !GetAtt rContentGapFunction.Arn
       Description: ARN of the OTT Content Gap Lambda
 
+  rContentGapRoleSsm:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /sdlf/pipeline/rRole/ott-mainCG
+      Type: String
+      Value: !GetAtt rContentGapRole.Arn
+      Description: IAM role ARN for the OTT Content Gap Lambda (used by LF stack)
+
 Outputs:
   oPipelineReference:
     Description: CodePipeline reference this stack has been deployed with

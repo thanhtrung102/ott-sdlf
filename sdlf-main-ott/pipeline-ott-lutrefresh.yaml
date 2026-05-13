@@ -364,6 +364,14 @@ Resources:
       Value: !GetAtt rLutRefreshFunction.Arn
       Description: ARN of the OTT LUT Refresh Lambda
 
+  rLutRefreshRoleSsm:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /sdlf/pipeline/rRole/ott-mainLUT
+      Type: String
+      Value: !GetAtt rLutRefreshRole.Arn
+      Description: IAM role ARN for the OTT LUT Refresh Lambda (used by LF stack)
+
 Outputs:
   oPipelineReference:
     Description: CodePipeline reference this stack has been deployed with

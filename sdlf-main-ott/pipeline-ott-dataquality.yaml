@@ -380,6 +380,22 @@ Resources:
       Value: !Ref rDQStateMachine
       Description: ARN of the OTT mainDQ Data Quality State Machine
 
+  rDQExecRoleSsm:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /sdlf/pipeline/rRole/ott-mainDQExec
+      Type: String
+      Value: !GetAtt rDQExecutionRole.Arn
+      Description: DQ SM execution role ARN (used by LF stack)
+
+  rDQGlueRoleSsm:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /sdlf/pipeline/rRole/ott-mainDQGlue
+      Type: String
+      Value: !GetAtt rGlueDQRole.Arn
+      Description: Glue DQ role ARN (used by LF stack)
+
 Outputs:
   oPipelineReference:
     Description: CodePipeline reference this stack has been deployed with
