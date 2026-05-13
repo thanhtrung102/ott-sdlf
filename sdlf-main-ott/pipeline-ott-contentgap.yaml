@@ -78,7 +78,7 @@ Resources:
                   - athena:GetQueryExecution
                   - athena:GetQueryResults
                 Resource:
-                  - !Sub arn:${AWS::Partition}:athena:${AWS::Region}:${AWS::AccountId}:workgroup/primary
+                  - !Sub arn:${AWS::Partition}:athena:${AWS::Region}:${AWS::AccountId}:workgroup/sdlf-ott
               - Effect: Allow
                 Action:
                   - glue:GetDatabase
@@ -147,6 +147,7 @@ Resources:
           ANALYTICS_PREFIX: analytics/content-gap/
           SNS_TOPIC_ARN: !Ref pSnsTopicArn
           REPORT_PRESIGN_TTL_SECONDS: "604800"
+          ATHENA_WORKGROUP: sdlf-ott
           TEAM: ott
           PIPELINE: main
           PIPELINE_STAGE: ContentGap
@@ -171,6 +172,7 @@ Resources:
           ANALYTICS_PREFIX = os.environ["ANALYTICS_PREFIX"]
           SNS_TOPIC_ARN    = os.environ["SNS_TOPIC_ARN"]
           REPORT_TTL       = int(os.environ.get("REPORT_PRESIGN_TTL_SECONDS", "604800"))
+          WORKGROUP        = os.environ.get("ATHENA_WORKGROUP", "sdlf-ott")
 
           QUERIES = {
               "content_gaps": """
@@ -236,6 +238,7 @@ Resources:
                   QueryString=sql,
                   QueryExecutionContext={"Database": DB},
                   ResultConfiguration={"OutputLocation": RESULTS},
+                  WorkGroup=WORKGROUP,
               )
               qid = r["QueryExecutionId"]
               while True:

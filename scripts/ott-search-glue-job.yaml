@@ -102,7 +102,7 @@ Resources:
         PythonVersion: "3"
         ScriptLocation: !Sub s3://${pArtifactsBucket}/artifacts/ott-search-glue-job.py
       DefaultArguments:
-        "--job-bookmark-option": "job-bookmark-disable"
+        "--job-bookmark-option": "job-bookmark-enable"
         "--enable-metrics": ""
         "--enable-continuous-cloudwatch-log": "true"
         "--enable-continuous-log-filter": "true"

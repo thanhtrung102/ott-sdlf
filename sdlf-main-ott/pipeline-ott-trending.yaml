@@ -95,7 +95,7 @@ Resources:
                   - athena:GetQueryExecution
                   - athena:GetQueryResults
                 Resource:
-                  - !Sub arn:${AWS::Partition}:athena:${AWS::Region}:${AWS::AccountId}:workgroup/primary
+                  - !Sub arn:${AWS::Partition}:athena:${AWS::Region}:${AWS::AccountId}:workgroup/sdlf-ott
               - Effect: Allow
                 Action:
                   - glue:GetDatabase
@@ -196,6 +196,7 @@ Resources:
           MIN_SEARCH_VOLUME: !Sub "${pMinSearchVolume}"
           GOLD_DATABASE: !Ref pGoldDatabaseName
           GOLD_LOCATION: !Sub s3://${pGoldBucket}/ott/searchevents/gold/keyword_trends/
+          ATHENA_WORKGROUP: sdlf-ott
           TEAM: ott
           PIPELINE: main
           PIPELINE_STAGE: Trending
@@ -222,6 +223,7 @@ Resources:
           SNS_TOPIC_ARN    = os.environ["SNS_TOPIC_ARN"]
           MIN_GROWTH       = float(os.environ["MIN_GROWTH_MULTIPLIER"])
           MIN_VOLUME       = int(os.environ["MIN_SEARCH_VOLUME"])
+          WORKGROUP        = os.environ.get("ATHENA_WORKGROUP", "sdlf-ott")
 
           _TRENDING_SQL = """
           WITH current_window AS (
@@ -304,6 +306,7 @@ Resources:
               r = athena.start_query_execution(
                   QueryString=sql, QueryExecutionContext={"Database": DB},
                   ResultConfiguration={"OutputLocation": RESULTS},
+                  WorkGroup=WORKGROUP,
               )
               qid = r["QueryExecutionId"]
               while True:
@@ -320,7 +323,7 @@ Resources:
               return headers or [], rows
 
           def athena_ddl(sql):
-              r = athena.start_query_execution(QueryString=sql, ResultConfiguration={"OutputLocation": RESULTS})
+              r = athena.start_query_execution(QueryString=sql, ResultConfiguration={"OutputLocation": RESULTS}, WorkGroup=WORKGROUP)
               qid = r["QueryExecutionId"]
               while True:
                   st = athena.get_query_execution(QueryExecutionId=qid)["QueryExecution"]["Status"]["State"]

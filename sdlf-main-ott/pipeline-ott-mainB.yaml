@@ -33,7 +33,7 @@ Resources:
         pEnableTracing: "false"
         pGlueArguments: >-
           {
-            "--job-bookmark-option": "job-bookmark-disable",
+            "--job-bookmark-option": "job-bookmark-enable",
             "--enable-metrics": "",
             "--SOURCE_LOCATION": "s3://{{resolve:ssm:/sdlf/storage/rRawBucket/prod}}/ott/searchevents/",
             "--OUTPUT_LOCATION": "s3://{{resolve:ssm:/sdlf/storage/rAnalyticsBucket/prod}}/ott/searchevents/curated/",

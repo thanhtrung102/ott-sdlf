@@ -16,6 +16,7 @@ phases:
           sdlf-main-ott/pipeline-ott-mainA.yaml \
           sdlf-main-ott/pipeline-ott-mainB.yaml \
           sdlf-main-ott/pipeline-ott-dataquality.yaml \
+          sdlf-main-ott/pipeline-ott-athenaworkgroup.yaml \
           sdlf-main-ott/pipeline-ott-lutrefresh.yaml \
           sdlf-main-ott/pipeline-ott-contentgap.yaml \
           sdlf-main-ott/pipeline-ott-trending.yaml \
@@ -31,6 +32,7 @@ phases:
           sdlf-main-ott/pipeline-ott-mainA.yaml \
           sdlf-main-ott/pipeline-ott-mainB.yaml \
           sdlf-main-ott/pipeline-ott-dataquality.yaml \
+          sdlf-main-ott/pipeline-ott-athenaworkgroup.yaml \
           sdlf-main-ott/pipeline-ott-lutrefresh.yaml \
           sdlf-main-ott/pipeline-ott-contentgap.yaml \
           sdlf-main-ott/pipeline-ott-trending.yaml \

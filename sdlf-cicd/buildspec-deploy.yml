@@ -54,6 +54,8 @@ phases:
 
         deploy sdlf-pipeline-ott-dataquality sdlf-main-ott/pipeline-ott-dataquality.yaml
 
+        deploy sdlf-pipeline-ott-athenaworkgroup sdlf-main-ott/pipeline-ott-athenaworkgroup.yaml
+
         deploy sdlf-pipeline-ott-lutrefresh sdlf-main-ott/pipeline-ott-lutrefresh.yaml \
           pMaxNewKeywords=${MAX_NEW_KEYWORDS} \
           pBedrockModelId=${BEDROCK_MODEL_ID}
@@ -76,6 +78,7 @@ phases:
           sdlf-pipeline-ott-mainA \
           sdlf-pipeline-ott-mainB \
           sdlf-pipeline-ott-dataquality \
+          sdlf-pipeline-ott-athenaworkgroup \
           sdlf-pipeline-ott-lutrefresh \
           sdlf-pipeline-ott-contentgap \
           sdlf-pipeline-ott-trending \
