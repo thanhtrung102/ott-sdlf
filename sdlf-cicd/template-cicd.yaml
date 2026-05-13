@@ -650,7 +650,6 @@ Resources:
   # Preserves existing SDLF main CI/CD admin and terraform-admin.
   rLFDataLakeSettings:
     Type: AWS::LakeFormation::DataLakeSettings
-    DependsOn: rCodeBuildRole
     Properties:
       Admins:
         - DataLakePrincipalIdentifier: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sdlf-ott/${rCodeBuildRole}
