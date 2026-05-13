@@ -643,6 +643,32 @@ Resources:
                   cp.put_job_failure_result(jobId=job_id, failureDetails={"type":"JobFailed","message":str(e)})
                   raise
 
+  ######## LAKE FORMATION DATA LAKE SETTINGS ########
+
+  # CodeBuild must be a LF data lake admin to call lakeformation:GrantPermissions
+  # on the curated table (required by pipeline-ott-lakeformation.yaml).
+  # Preserves existing SDLF main CI/CD admin and terraform-admin.
+  rLFDataLakeSettings:
+    Type: AWS::LakeFormation::DataLakeSettings
+    DependsOn: rCodeBuildRole
+    Properties:
+      Admins:
+        - DataLakePrincipalIdentifier: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sdlf-ott/${rCodeBuildRole}
+        - DataLakePrincipalIdentifier: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sdlf-cicd-codebuild-${AWS::AccountId}-sdlf-main
+        - DataLakePrincipalIdentifier: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:user/terraform-admin
+      CreateDatabaseDefaultPermissions:
+        - Principal:
+            DataLakePrincipalIdentifier: IAM_ALLOWED_PRINCIPALS
+          Permissions:
+            - ALL
+      CreateTableDefaultPermissions:
+        - Principal:
+            DataLakePrincipalIdentifier: IAM_ALLOWED_PRINCIPALS
+          Permissions:
+            - ALL
+      Parameters:
+        CROSS_ACCOUNT_VERSION: "4"
+
   ######## SSM ########
 
   rPipelineArnSsm:
