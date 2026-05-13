@@ -278,6 +278,16 @@ Resources:
                   - glue:GetJob
                   - glue:TagResource
                 Resource: !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:job/sdlf-ott-*
+              - Sid: GlueCatalogRead
+                Effect: Allow
+                Action:
+                  - glue:GetDatabase
+                  - glue:GetTable
+                  - glue:GetPartitions
+                Resource:
+                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:catalog
+                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/*
+                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/*/*
               - Sid: Athena
                 Effect: Allow
                 Action:
