@@ -196,6 +196,31 @@ Resources:
                   WHERE dt >= DATE_FORMAT(CURRENT_DATE - INTERVAL '7' DAY, '%Y-%m-%d')
                   GROUP BY platform_group, derived_genre ORDER BY platform_group, searches DESC
               """,
+              "hour_of_day_heatmap": """
+                  SELECT hour_of_day_vn, derived_genre, COUNT(*) AS searches,
+                         ROUND(100.0 * COUNT(*) / CAST(SUM(COUNT(*)) OVER (PARTITION BY derived_genre) AS double), 1) AS pct_of_genre
+                  FROM {db}.curated WHERE derived_genre != 'UNKNOWN'
+                  GROUP BY hour_of_day_vn, derived_genre ORDER BY derived_genre, hour_of_day_vn
+              """,
+              "guest_vs_auth_demand": """
+                  SELECT derived_genre, COUNT(*) AS total_searches,
+                         SUM(CASE WHEN user_is_authenticated THEN 1 ELSE 0 END) AS auth_searches,
+                         SUM(CASE WHEN NOT user_is_authenticated THEN 1 ELSE 0 END) AS guest_searches,
+                         ROUND(100.0 * SUM(CASE WHEN NOT user_is_authenticated THEN 1 ELSE 0 END)
+                               / CAST(COUNT(*) AS double), 1) AS guest_share_pct
+                  FROM {db}.curated WHERE derived_genre != 'UNKNOWN'
+                  GROUP BY derived_genre ORDER BY guest_share_pct DESC
+              """,
+              "network_abandon_rate": """
+                  SELECT network_type_norm, COUNT(*) AS total_searches,
+                         SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END) AS abandoned,
+                         ROUND(100.0 * SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END)
+                               / CAST(COUNT(*) AS double), 1) AS abandon_rate_pct,
+                         derived_genre,
+                         ROUND(100.0 * COUNT(*) / CAST(SUM(COUNT(*)) OVER (PARTITION BY network_type_norm) AS double), 1) AS genre_share_pct
+                  FROM {db}.curated WHERE derived_genre != 'UNKNOWN'
+                  GROUP BY network_type_norm, derived_genre ORDER BY network_type_norm, total_searches DESC
+              """,
           }
 
           def athena_query(sql):
