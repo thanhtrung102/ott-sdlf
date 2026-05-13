@@ -193,6 +193,7 @@ Resources:
                 Resource:
                   - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sdlf-ott/*
                   - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/service-role/sdlf-*
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sdlf-ott-*
               - Sid: IAMManagedPolicy
                 Effect: Allow
                 Action:

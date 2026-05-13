@@ -93,7 +93,7 @@ Resources:
     Type: AWS::Glue::Job
     Properties:
       Name: !Sub sdlf-${pTeamName}-${pDatasetName}-glue-job
-      Role: !Ref rGlueRole
+      Role: !GetAtt rGlueRole.Arn
       GlueVersion: "4.0"
       WorkerType: G.1X
       NumberOfWorkers: 10
