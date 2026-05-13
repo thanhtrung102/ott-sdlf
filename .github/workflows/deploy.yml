@@ -128,16 +128,6 @@ jobs:
             --no-fail-on-empty-changeset \
             --region $AWS_REGION
 
-      - name: Deploy Data Consumer (Named Queries + SNS subscription)
-        if: ${{ github.event.inputs.stacks == '' || contains(github.event.inputs.stacks, 'consumer') }}
-        run: |
-          aws cloudformation deploy \
-            --template-file sdlf-main-ott/pipeline-ott-consumer.yaml \
-            --stack-name sdlf-pipeline-ott-consumer \
-            --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
-            --no-fail-on-empty-changeset \
-            --region $AWS_REGION
-
       - name: Deploy Monitoring (dashboards + alarms)
         if: ${{ github.event.inputs.stacks == '' || contains(github.event.inputs.stacks, 'monitoring') }}
         run: |

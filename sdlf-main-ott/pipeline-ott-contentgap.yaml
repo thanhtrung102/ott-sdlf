@@ -133,6 +133,7 @@ Resources:
           STAGE_BUCKET: !Ref pStageBucket
           ANALYTICS_PREFIX: analytics/content-gap/
           SNS_TOPIC_ARN: !Ref pSnsTopicArn
+          REPORT_PRESIGN_TTL_SECONDS: "604800"
           TEAM: ott
           PIPELINE: main
           PIPELINE_STAGE: ContentGap
@@ -156,6 +157,7 @@ Resources:
           STAGE_BUCKET     = os.environ["STAGE_BUCKET"]
           ANALYTICS_PREFIX = os.environ["ANALYTICS_PREFIX"]
           SNS_TOPIC_ARN    = os.environ["SNS_TOPIC_ARN"]
+          REPORT_TTL       = int(os.environ.get("REPORT_PRESIGN_TTL_SECONDS", "604800"))
 
           QUERIES = {
               "content_gaps": """
@@ -200,6 +202,22 @@ Resources:
               """,
           }
 
+          QUERY_TITLES = {
+              "content_gaps": "Content Gaps — Top Abandoned Keywords",
+              "premium_vs_free": "Premium vs Free Demand by Genre",
+              "repeat_search_rate": "Repeat Search Rate by Genre",
+              "hour_of_day_heatmap": "Search Volume by Hour (Vietnam Time)",
+              "guest_vs_auth_demand": "Guest vs Authenticated Demand by Genre",
+          }
+
+          QUERY_DESCRIPTIONS = {
+              "content_gaps": "High abandoned + high abandon_rate_pct = title missing from platform. Use as acquisition shortlist.",
+              "premium_vs_free": "High premium_share_pct genres justify higher licensing spend.",
+              "repeat_search_rate": "High repeat_pct = users keep searching without finding. Content or UX problem.",
+              "hour_of_day_heatmap": "Use pct_of_genre to find peak hours per genre for push notification scheduling.",
+              "guest_vs_auth_demand": "High guest_share_pct genres are strongest login-gate conversion opportunities.",
+          }
+
           def athena_query(sql):
               r = athena.start_query_execution(
                   QueryString=sql,
@@ -228,17 +246,61 @@ Resources:
               logger.info(f"Wrote {len(rows)} rows -> s3://{STAGE_BUCKET}/{key}")
               return len(rows)
 
+          def _html_table(headers, rows):
+              if not headers: return "<p><em>No data</em></p>"
+              ths = "".join(f"<th>{h}</th>" for h in headers)
+              trs = "".join("<tr>" + "".join(f"<td>{row.get(h,'')}</td>" for h in headers) + "</tr>" for row in rows)
+              return f"<table><thead><tr>{ths}</tr></thead><tbody>{trs}</tbody></table>"
+
+          def build_html_report(dt, results):
+              sections = ""
+              for name, (headers, rows, count) in results.items():
+                  title = QUERY_TITLES.get(name, name)
+                  desc = QUERY_DESCRIPTIONS.get(name, "")
+                  badge = f'<span class="badge ok">{count} rows</span>' if count >= 0 else '<span class="badge err">FAILED</span>'
+                  table = _html_table(headers, rows) if count >= 0 else "<p><em>Query failed</em></p>"
+                  sections += f'<section><h2>{title} {badge}</h2><p class="desc">{desc}</p>{table}</section>'
+              return (
+                  f'<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">'
+                  f'<meta name="viewport" content="width=device-width,initial-scale=1">'
+                  f'<title>OTT Content Gap Report — {dt}</title>'
+                  f'<style>body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;background:#f5f5f5;color:#222}}'
+                  f'header{{background:#1a1a2e;color:#fff;padding:24px 32px}}header h1{{margin:0 0 4px;font-size:1.4rem}}'
+                  f'header p{{margin:0;opacity:.7;font-size:.9rem}}main{{max-width:1200px;margin:0 auto;padding:24px 32px}}'
+                  f'section{{background:#fff;border-radius:8px;padding:24px;margin-bottom:24px;box-shadow:0 1px 4px rgba(0,0,0,.08)}}'
+                  f'h2{{margin:0 0 8px;font-size:1.1rem;display:flex;align-items:center;gap:10px}}'
+                  f'.desc{{margin:0 0 16px;color:#555;font-size:.85rem}}'
+                  f'table{{width:100%;border-collapse:collapse;font-size:.83rem}}'
+                  f'th{{background:#f0f0f0;text-align:left;padding:8px 10px;border-bottom:2px solid #ddd;white-space:nowrap}}'
+                  f'td{{padding:7px 10px;border-bottom:1px solid #eee}}tr:hover td{{background:#fafafa}}'
+                  f'.badge{{font-size:.75rem;padding:2px 8px;border-radius:12px;font-weight:600}}'
+                  f'.badge.ok{{background:#d4edda;color:#155724}}.badge.err{{background:#f8d7da;color:#721c24}}'
+                  f'</style></head><body>'
+                  f'<header><h1>OTT Content Gap Report</h1>'
+                  f'<p>Pipeline run: {dt} &nbsp;|&nbsp; Source: {DB}.curated</p></header>'
+                  f'<main>{sections}</main></body></html>'
+              )
+
+          def write_html_report(key, html):
+              s3.put_object(Bucket=STAGE_BUCKET, Key=key, Body=html.encode("utf-8"), ContentType="text/html")
+              url = s3.generate_presigned_url("get_object", Params={"Bucket": STAGE_BUCKET, "Key": key}, ExpiresIn=REPORT_TTL)
+              logger.info(f"HTML report -> s3://{STAGE_BUCKET}/{key}")
+              return url
+
           def lambda_handler(event, context):
               logger.info(f"Content gap report triggered — source: {event.get('source','?')} detail-type: {event.get('detail-type','?')}")
               dt = datetime.now(timezone.utc).strftime("%Y-%m-%d")
               prefix = f"{ANALYTICS_PREFIX}{dt}/"
-              summary, errors = {}, 0
+              summary, errors, results = {}, 0, {}
               for name, sql_tpl in QUERIES.items():
                   try:
                       headers, rows = athena_query(sql_tpl.format(db=DB))
-                      summary[name] = write_csv(f"{prefix}{name}.csv", headers, rows)
+                      count = write_csv(f"{prefix}{name}.csv", headers, rows)
+                      summary[name] = count; results[name] = (headers, rows, count)
                   except Exception as e:
-                      logger.error(f"{name} failed: {e}"); summary[name] = -1; errors += 1
+                      logger.error(f"{name} failed: {e}"); summary[name] = -1; results[name] = ([], [], -1); errors += 1
+              html = build_html_report(dt, results)
+              report_url = write_html_report(f"{prefix}report.html", html)
               message = (
                   f"OTT Content Gap Report — {dt}\n"
                   f"Content gaps (abandoned keywords): {summary.get('content_gaps',0)}\n"
@@ -246,11 +308,11 @@ Resources:
                   f"Repeat search rate: {summary.get('repeat_search_rate',0)} genres\n"
                   f"Hour heatmap: {summary.get('hour_of_day_heatmap',0)} rows\n"
                   f"Guest vs auth: {summary.get('guest_vs_auth_demand',0)} genres\n"
-                  f"Reports: s3://{STAGE_BUCKET}/{prefix}\nErrors: {errors}"
+                  f"Errors: {errors}\n\nDashboard: {report_url}"
               )
               sns.publish(TopicArn=SNS_TOPIC_ARN, Subject=f"OTT Content Gap Report {dt}", Message=message)
               logger.info(f"Report complete — {sum(v for v in summary.values() if v>0)} total rows, {errors} errors")
-              return {"dt": dt, "reports": summary, "prefix": f"s3://{STAGE_BUCKET}/{prefix}", "errors": errors}
+              return {"dt": dt, "reports": summary, "prefix": f"s3://{STAGE_BUCKET}/{prefix}", "report_url": report_url, "errors": errors}
 
   rContentGapPermission:
     Type: AWS::Lambda::Permission

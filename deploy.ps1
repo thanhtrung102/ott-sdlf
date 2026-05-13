@@ -80,12 +80,7 @@ Deploy-Stack `
     -StackName "sdlf-pipeline-ott-trending" `
     -TemplatePath "$Repo\sdlf-main-ott\pipeline-ott-trending.yaml"
 
-# ── 8. Data Consumer (Named Queries + SNS subscription) ──────────────────────
-Deploy-Stack `
-    -StackName "sdlf-pipeline-ott-consumer" `
-    -TemplatePath "$Repo\sdlf-main-ott\pipeline-ott-consumer.yaml"
-
-# ── 9. Monitoring (dashboards + alarms) ──────────────────────────────────────
+# ── 8. Monitoring (dashboards + alarms) ──────────────────────────────────────
 Deploy-Stack `
     -StackName "sdlf-pipeline-ott-monitoring" `
     -TemplatePath "$Repo\sdlf-main-ott\pipeline-ott-monitoring.yaml"
