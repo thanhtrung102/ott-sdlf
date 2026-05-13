@@ -32,6 +32,9 @@ Parameters:
   pContentGapLambdaName:
     Type: String
     Default: sdlf-ott-mainCG-report
+  pTrendingLambdaName:
+    Type: String
+    Default: sdlf-ott-mainTR-report
   pAlarmPeriodSeconds:
     Type: Number
     Default: 300
@@ -216,6 +219,35 @@ Resources:
                 "period": 86400,
                 "region": "${AWS::Region}"
               }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 31, "width": 12, "height": 6,
+              "properties": {
+                "title": "Trending Lambda — Invocations & Errors",
+                "metrics": [
+                  ["AWS/Lambda","Invocations","FunctionName","${pTrendingLambdaName}",{"label":"Invocations","color":"#2ca02c","stat":"Sum"}],
+                  ["AWS/Lambda","Errors","FunctionName","${pTrendingLambdaName}",{"label":"Errors","color":"#d62728","stat":"Sum"}]
+                ],
+                "view": "timeSeries",
+                "period": 86400,
+                "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12, "y": 31, "width": 12, "height": 6,
+              "properties": {
+                "title": "Trending Lambda — Duration (ms)",
+                "metrics": [
+                  ["AWS/Lambda","Duration","FunctionName","${pTrendingLambdaName}",{"label":"p50","stat":"p50","color":"#1f77b4"}],
+                  ["AWS/Lambda","Duration","FunctionName","${pTrendingLambdaName}",{"label":"p90","stat":"p90","color":"#ff7f0e"}],
+                  ["AWS/Lambda","Duration","FunctionName","${pTrendingLambdaName}",{"label":"p99","stat":"p99","color":"#d62728"}]
+                ],
+                "view": "timeSeries",
+                "period": 86400,
+                "region": "${AWS::Region}"
+              }
             }
           ]
         }
@@ -394,6 +426,46 @@ Resources:
       Dimensions:
         - Name: FunctionName
           Value: !Ref pContentGapLambdaName
+      ExtendedStatistic: p90
+      Period: 86400
+      EvaluationPeriods: 1
+      Threshold: 270000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref pSnsTopicArn
+
+  rAlarmTrendingErrors:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sdlf-ott-mainTR-report-errors
+      AlarmDescription: Trending Lambda had errors — trending reports may be incomplete
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref pTrendingLambdaName
+      Statistic: Sum
+      Period: !Ref pAlarmPeriodSeconds
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref pSnsTopicArn
+      OKActions:
+        - !Ref pSnsTopicArn
+
+  rAlarmTrendingDuration:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sdlf-ott-mainTR-report-near-timeout
+      AlarmDescription: Trending Lambda p90 duration exceeded 270s (90% of 300s limit)
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref pTrendingLambdaName
       ExtendedStatistic: p90
       Period: 86400
       EvaluationPeriods: 1

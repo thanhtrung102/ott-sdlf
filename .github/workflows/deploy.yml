@@ -118,6 +118,16 @@ jobs:
             --no-fail-on-empty-changeset \
             --region $AWS_REGION
 
+      - name: Deploy Trending Keywords Lambda
+        if: ${{ github.event.inputs.stacks == '' || contains(github.event.inputs.stacks, 'trending') }}
+        run: |
+          aws cloudformation deploy \
+            --template-file sdlf-main-ott/pipeline-ott-trending.yaml \
+            --stack-name sdlf-pipeline-ott-trending \
+            --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
+            --no-fail-on-empty-changeset \
+            --region $AWS_REGION
+
       - name: Deploy Monitoring (dashboards + alarms)
         if: ${{ github.event.inputs.stacks == '' || contains(github.event.inputs.stacks, 'monitoring') }}
         run: |

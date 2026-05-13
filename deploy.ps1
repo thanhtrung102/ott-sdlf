@@ -75,7 +75,12 @@ Deploy-Stack `
     -StackName "sdlf-pipeline-ott-contentgap" `
     -TemplatePath "$Repo\sdlf-main-ott\pipeline-ott-contentgap.yaml"
 
-# ── 7. Monitoring (dashboards + alarms) ──────────────────────────────────────
+# ── 7. Trending Keywords Lambda ──────────────────────────────────────────────
+Deploy-Stack `
+    -StackName "sdlf-pipeline-ott-trending" `
+    -TemplatePath "$Repo\sdlf-main-ott\pipeline-ott-trending.yaml"
+
+# ── 8. Monitoring (dashboards + alarms) ──────────────────────────────────────
 Deploy-Stack `
     -StackName "sdlf-pipeline-ott-monitoring" `
     -TemplatePath "$Repo\sdlf-main-ott\pipeline-ott-monitoring.yaml"
