@@ -1,0 +1,20 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: OTT domain foundations, prod environment
+
+Parameters:
+  pPipelineReference:
+    Type: String
+    Default: none
+
+Resources:
+  rFoundations:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: "{{resolve:ssm:/sdlf/foundations/main}}"
+      Parameters:
+        pPipelineReference: !Ref pPipelineReference
+        pChildAccountId: !Ref AWS::AccountId
+        pOrg: fpt
+        pDomain: ott
+        pDeploymentInstance: prod
+        pCicdRole: sdlf-cicd-codebuild-703668403514-sdlf-main

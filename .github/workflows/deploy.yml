@@ -1,0 +1,127 @@
+name: Deploy OTT SDLF
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sdlf-main-ott/**"
+      - "sdlf-main/**"
+      - "scripts/**"
+      - "sdlf-cicd/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+    inputs:
+      stacks:
+        description: "Comma-separated stack names to deploy (leave blank for all)"
+        required: false
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-southeast-1
+  AWS_ACCOUNT: "703668403514"
+
+jobs:
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve shared parameters
+        id: params
+        run: |
+          KMS_KEY=$(aws ssm get-parameter \
+            --name "/sdlf/storage/rKMSKey/prod" \
+            --query "Parameter.Value" --output text \
+            --region $AWS_REGION)
+          echo "kms_key=$KMS_KEY" >> $GITHUB_OUTPUT
+
+      - name: Deploy Glue ETL job
+        if: ${{ github.event.inputs.stacks == '' || contains(github.event.inputs.stacks, 'glue-job') }}
+        run: |
+          aws cloudformation deploy \
+            --template-file scripts/ott-search-glue-job.yaml \
+            --stack-name sdlf-ott-searchevents-glue-job \
+            --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
+            --no-fail-on-empty-changeset \
+            --region $AWS_REGION \
+            --parameter-overrides \
+              pTeamName=ott \
+              pDatasetName=searchevents \
+              pArtifactsBucket=ott-search-${{ env.AWS_ACCOUNT }}-prod \
+              pKmsKeyArn=${{ steps.params.outputs.kms_key }} \
+              pPipelineDeploymentInstance=mainB
+
+      - name: Deploy Stage A state machine
+        if: ${{ github.event.inputs.stacks == '' || contains(github.event.inputs.stacks, 'mainA') }}
+        run: |
+          aws cloudformation deploy \
+            --template-file sdlf-main-ott/pipeline-ott-mainA.yaml \
+            --stack-name sdlf-pipeline-ott-mainA \
+            --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
+            --no-fail-on-empty-changeset \
+            --region $AWS_REGION
+
+      - name: Deploy Stage B state machine
+        if: ${{ github.event.inputs.stacks == '' || contains(github.event.inputs.stacks, 'mainB') }}
+        run: |
+          aws cloudformation deploy \
+            --template-file sdlf-main-ott/pipeline-ott-mainB.yaml \
+            --stack-name sdlf-pipeline-ott-mainB \
+            --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
+            --no-fail-on-empty-changeset \
+            --region $AWS_REGION
+
+      - name: Deploy Data Quality state machine
+        if: ${{ github.event.inputs.stacks == '' || contains(github.event.inputs.stacks, 'dataquality') }}
+        run: |
+          aws cloudformation deploy \
+            --template-file sdlf-main-ott/pipeline-ott-dataquality.yaml \
+            --stack-name sdlf-pipeline-ott-dataquality \
+            --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
+            --no-fail-on-empty-changeset \
+            --region $AWS_REGION
+
+      - name: Deploy LUT Refresh Lambda
+        if: ${{ github.event.inputs.stacks == '' || contains(github.event.inputs.stacks, 'lutrefresh') }}
+        run: |
+          aws cloudformation deploy \
+            --template-file sdlf-main-ott/pipeline-ott-lutrefresh.yaml \
+            --stack-name sdlf-pipeline-ott-lutrefresh \
+            --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
+            --no-fail-on-empty-changeset \
+            --region $AWS_REGION \
+            --parameter-overrides \
+              pMaxNewKeywords=15000 \
+              pBedrockModelId=global.anthropic.claude-haiku-4-5-20251001-v1:0
+
+      - name: Deploy Monitoring (dashboards + alarms)
+        if: ${{ github.event.inputs.stacks == '' || contains(github.event.inputs.stacks, 'monitoring') }}
+        run: |
+          aws cloudformation deploy \
+            --template-file sdlf-main-ott/pipeline-ott-monitoring.yaml \
+            --stack-name sdlf-pipeline-ott-monitoring \
+            --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
+            --no-fail-on-empty-changeset \
+            --region $AWS_REGION
+
+      - name: Summary
+        run: |
+          echo "## Deployed stacks" >> $GITHUB_STEP_SUMMARY
+          aws cloudformation describe-stacks \
+            --region $AWS_REGION \
+            --query "Stacks[?contains(StackName, 'sdlf-ott') || contains(StackName, 'sdlf-pipeline-ott')].{Stack:StackName,Status:StackStatus,Updated:LastUpdatedTime}" \
+            --output table >> $GITHUB_STEP_SUMMARY

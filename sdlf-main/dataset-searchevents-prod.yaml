@@ -1,0 +1,18 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: OTT searchevents dataset, prod environment
+
+Parameters:
+  pPipelineReference:
+    Type: String
+    Default: none
+
+Resources:
+  rDatasetSearchevents:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: "{{resolve:ssm:/sdlf/dataset/main}}"
+      Parameters:
+        pPipelineReference: !Ref pPipelineReference
+        pDeploymentInstance: searchevents
+        pStorageDeploymentInstance: prod
+        pS3Prefix: searchevents

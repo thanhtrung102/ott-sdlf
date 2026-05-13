@@ -1,0 +1,17 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: OTT team, prod environment
+
+Parameters:
+  pPipelineReference:
+    Type: String
+    Default: none
+
+Resources:
+  rTeamOtt:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: "{{resolve:ssm:/sdlf/team/main}}"
+      Parameters:
+        pPipelineReference: !Ref pPipelineReference
+        pTeamName: ott
+        pStorageDeploymentInstance: prod

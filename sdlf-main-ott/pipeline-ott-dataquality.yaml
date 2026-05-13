@@ -1,0 +1,389 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: OTT searchevents Data Quality Stage — Glue DQ checks on curated table after Stage B
+
+Parameters:
+  pPipelineReference:
+    Type: String
+    Default: none
+  pDatabaseName:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/dataset/rAnalyticsGlueDataCatalog/searchevents
+  pCrawlerName:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/dataset/rAnalyticsGlueCrawler/searchevents
+  pCrawlerRoleArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/dataset/rDatalakeCrawlerRole/searchevents
+  pStageBucket:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/storage/rStageBucket/prod
+  pStageBSmArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/pipeline/rStateMachine/ott-mainB
+  pAnalyticsBucket:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/storage/rAnalyticsBucket/prod
+  pKmsKeyArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/storage/rKMSKey/prod
+
+Resources:
+
+  ######## IAM ########
+
+  rDQExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /sdlf-ott/
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: !Sub states.${AWS::Region}.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: sdlf-ott-dataquality-sm
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - glue:StartDataQualityRuleRecommendationRun
+                  - glue:GetDataQualityRuleRecommendationRun
+                  - glue:StartDataQualityRulesetEvaluationRun
+                  - glue:GetDataQualityRulesetEvaluationRun
+                Resource: !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:dataQualityRuleset/*
+              - Effect: Allow
+                Action:
+                  - glue:GetTable
+                  - glue:GetDatabase
+                Resource:
+                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:catalog
+                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/${pDatabaseName}
+                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/${pDatabaseName}/*
+              - Effect: Allow
+                Action:
+                  - glue:StartCrawler
+                Resource:
+                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:crawler/${pCrawlerName}
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !Ref pCrawlerRoleArn
+                  - !GetAtt rGlueDQRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: glue.amazonaws.com
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutLogEvents
+                  - logs:PutResourcePolicy
+                  - logs:CreateLogGroup
+                  - logs:DescribeLogGroups
+                  - logs:DescribeResourcePolicies
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                  - xray:GetSamplingRules
+                  - xray:GetSamplingTargets
+                Resource: "*"
+
+  rGlueDQRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /sdlf-ott/
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: sdlf-ott-glue-dq-s3
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${pStageBucket}/dq-results/ott/searchevents/*
+              - Effect: Allow
+                Action:
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${pStageBucket}
+              - Effect: Allow
+                Action:
+                  - glue:GetTable
+                  - glue:GetDatabase
+                  - glue:GetPartitions
+                Resource:
+                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:catalog
+                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/${pDatabaseName}
+                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/${pDatabaseName}/*
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${pAnalyticsBucket}/ott/searchevents/*
+              - Effect: Allow
+                Action:
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${pAnalyticsBucket}
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource:
+                  - !Ref pKmsKeyArn
+              - Effect: Allow
+                Action:
+                  - lakeformation:GetDataAccess
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws-glue/*
+
+  rEventBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /sdlf-ott/
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: sdlf-ott-dataquality-eb-start-sm
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource:
+                  - !Ref rDQStateMachine
+
+  ######## CLOUDWATCH LOGS ########
+
+  rDQSmLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /sdlf/statemachine/ott-mainDQ
+      RetentionInDays: 30
+
+  ######## STEP FUNCTIONS ########
+
+  rDQStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: sdlf-ott-mainDQ-sm
+      RoleArn: !GetAtt rDQExecutionRole.Arn
+      LoggingConfiguration:
+        Level: ERROR
+        IncludeExecutionData: false
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt rDQSmLogGroup.Arn
+      TracingConfiguration:
+        Enabled: true
+      DefinitionString: !Sub
+        - |
+          {
+            "Comment": "OTT searchevents Data Quality checks on fpt_ott_searchevents_analytics.curated",
+            "StartAt": "StartRecommendationRun",
+            "States": {
+              "StartRecommendationRun": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::aws-sdk:glue:startDataQualityRuleRecommendationRun",
+                "Parameters": {
+                  "DataSource": {
+                    "GlueTable": {
+                      "DatabaseName": "${pDatabaseName}",
+                      "TableName": "curated"
+                    }
+                  },
+                  "CreatedRulesetName": "${pDatabaseName}_curated",
+                  "Role": "${GlueDQRoleArn}",
+                  "NumberOfWorkers": 5
+                },
+                "ResultPath": "$.recommendation_run",
+                "Next": "WaitForRecommendation",
+                "Catch": [
+                  {
+                    "ErrorEquals": ["Glue.InvalidInputException"],
+                    "Comment": "Ruleset already exists — skip to evaluation",
+                    "ResultPath": null,
+                    "Next": "StartEvaluationRun"
+                  }
+                ]
+              },
+              "WaitForRecommendation": {
+                "Type": "Wait",
+                "Seconds": 60,
+                "Next": "GetRecommendationStatus"
+              },
+              "GetRecommendationStatus": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::aws-sdk:glue:getDataQualityRuleRecommendationRun",
+                "Parameters": {
+                  "RunId.$": "$.recommendation_run.RunId"
+                },
+                "ResultPath": "$.recommendation_status",
+                "Next": "RecommendationComplete"
+              },
+              "RecommendationComplete": {
+                "Type": "Choice",
+                "Choices": [
+                  {
+                    "Variable": "$.recommendation_status.Status",
+                    "StringEquals": "SUCCEEDED",
+                    "Next": "StartEvaluationRun"
+                  },
+                  {
+                    "Variable": "$.recommendation_status.Status",
+                    "StringEquals": "FAILED",
+                    "Next": "DQFailed"
+                  }
+                ],
+                "Default": "WaitForRecommendation"
+              },
+              "StartEvaluationRun": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::aws-sdk:glue:startDataQualityRulesetEvaluationRun",
+                "Parameters": {
+                  "DataSource": {
+                    "GlueTable": {
+                      "DatabaseName": "${pDatabaseName}",
+                      "TableName": "curated"
+                    }
+                  },
+                  "Role": "${GlueDQRoleArn}",
+                  "NumberOfWorkers": 5,
+                  "RulesetNames": ["${pDatabaseName}_curated"],
+                  "AdditionalRunOptions": {
+                    "CloudWatchMetricsEnabled": true,
+                    "ResultsS3Prefix": "s3://${pStageBucket}/dq-results/ott/searchevents/"
+                  }
+                },
+                "ResultPath": "$.evaluation_run",
+                "Next": "WaitForEvaluation"
+              },
+              "WaitForEvaluation": {
+                "Type": "Wait",
+                "Seconds": 60,
+                "Next": "GetEvaluationStatus"
+              },
+              "GetEvaluationStatus": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::aws-sdk:glue:getDataQualityRulesetEvaluationRun",
+                "Parameters": {
+                  "RunId.$": "$.evaluation_run.RunId"
+                },
+                "ResultPath": "$.evaluation_status",
+                "Next": "EvaluationComplete"
+              },
+              "EvaluationComplete": {
+                "Type": "Choice",
+                "Choices": [
+                  {
+                    "Variable": "$.evaluation_status.Status",
+                    "StringEquals": "SUCCEEDED",
+                    "Next": "StartCrawler"
+                  },
+                  {
+                    "Variable": "$.evaluation_status.Status",
+                    "StringEquals": "FAILED",
+                    "Next": "DQFailed"
+                  }
+                ],
+                "Default": "WaitForEvaluation"
+              },
+              "StartCrawler": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::aws-sdk:glue:startCrawler",
+                "Parameters": {
+                  "Name": "${pCrawlerName}"
+                },
+                "ResultPath": null,
+                "Retry": [
+                  {
+                    "ErrorEquals": ["Glue.CrawlerRunningException"],
+                    "IntervalSeconds": 30,
+                    "MaxAttempts": 6,
+                    "BackoffRate": 2
+                  }
+                ],
+                "Next": "DQSucceeded"
+              },
+              "DQSucceeded": {
+                "Type": "Succeed"
+              },
+              "DQFailed": {
+                "Type": "Fail",
+                "Error": "DataQualityCheckFailed",
+                "Cause": "Glue Data Quality ruleset evaluation did not pass"
+              }
+            }
+          }
+        - GlueDQRoleArn: !GetAtt rGlueDQRole.Arn
+
+  ######## EVENTBRIDGE ########
+
+  rDQTriggerRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: sdlf-ott-mainDQ-trigger
+      Description: Start Data Quality SM when Stage B SM succeeds
+      EventPattern: !Sub
+        - '{"source":["aws.states"],"detail-type":["Step Functions Execution Status Change"],"detail":{"status":["SUCCEEDED"],"stateMachineArn":["${StageBSmArn}"]}}'
+        - StageBSmArn: !Ref pStageBSmArn
+      State: ENABLED
+      Targets:
+        - Id: sdlf-ott-mainDQ-sm-target
+          Arn: !Ref rDQStateMachine
+          RoleArn: !GetAtt rEventBridgeRole.Arn
+
+  ######## SSM ########
+
+  rDQStateMachineSsm:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /sdlf/pipeline/rStateMachine/ott-mainDQ
+      Type: String
+      Value: !Ref rDQStateMachine
+      Description: ARN of the OTT mainDQ Data Quality State Machine
+
+Outputs:
+  oPipelineReference:
+    Description: CodePipeline reference this stack has been deployed with
+    Value: !Ref pPipelineReference
+  oDQStateMachineArn:
+    Description: ARN of the DQ State Machine
+    Value: !Ref rDQStateMachine

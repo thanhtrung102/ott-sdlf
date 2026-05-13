@@ -1,0 +1,57 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  GitHub Actions OIDC integration for OTT SDLF — creates the identity provider
+  and a deploy role that the Actions workflow assumes via short-lived tokens.
+  Deploy once: aws cloudformation deploy --template-file sdlf-cicd/template-github-oidc.yaml
+    --stack-name sdlf-ott-github-oidc --capabilities CAPABILITY_NAMED_IAM
+    --region ap-southeast-1
+
+Parameters:
+  pGitHubOrg:
+    Type: String
+    Default: thanhtrung102
+  pGitHubRepo:
+    Type: String
+    Default: ott-sdlf
+  pDeployBranch:
+    Type: String
+    Default: main
+    Description: Only this branch may assume the deploy role
+
+Resources:
+
+  rGitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+        - 1c58a3a8518e8759bf075b76b750d4f2df264fcd
+
+  rGitHubDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sdlf-ott-github-deploy
+      Path: /sdlf-ott/
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !GetAtt rGitHubOidcProvider.Arn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub:
+                  !Sub "repo:${pGitHubOrg}/${pGitHubRepo}:ref:refs/heads/${pDeployBranch}"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+
+Outputs:
+  oDeployRoleArn:
+    Description: IAM Role ARN for GitHub Actions — set as GH secret AWS_DEPLOY_ROLE_ARN
+    Value: !GetAtt rGitHubDeployRole.Arn

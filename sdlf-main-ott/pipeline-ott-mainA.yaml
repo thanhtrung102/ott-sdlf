@@ -1,0 +1,33 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: OTT searchevents Stage A — event-driven Lambda routing
+
+Parameters:
+  pPipelineReference:
+    Type: String
+    Default: none
+
+Resources:
+  rMainA:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: "{{resolve:ssm:/sdlf/stagelambda/main}}"
+      Parameters:
+        pPipelineReference: !Ref pPipelineReference
+        pDeploymentInstance: ott-mainA
+        pStorageDeploymentInstance: prod
+        pDatasetDeploymentInstance: searchevents
+        pTriggerType: event
+        pEventPattern: >-
+          {
+            "source": ["aws.s3"],
+            "detail-type": ["Object Created"],
+            "detail": {
+              "bucket": {
+                "name": ["{{resolve:ssm:/sdlf/storage/rRawBucket/prod}}"]
+              },
+              "object": {
+                "key": [{ "prefix": "ott/searchevents/" }]
+              }
+            }
+          }
+        pEnableTracing: "false"

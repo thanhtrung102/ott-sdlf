@@ -1,0 +1,340 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: OTT searchevents pipeline monitoring — CloudWatch dashboards and alarms
+
+Parameters:
+  pPipelineReference:
+    Type: String
+    Default: none
+  pSnsTopicArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /SDLF/SNS/ott/Notifications
+  pStageBSmArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/pipeline/rStateMachine/ott-mainB
+  pStageASmArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/pipeline/rStateMachine/ott-mainA
+  pDQSmArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/pipeline/rStateMachine/ott-mainDQ
+  pGlueJobName:
+    Type: String
+    Default: sdlf-ott-searchevents-glue-job
+  pMainADlqName:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/pipeline/rDeadLetterQueueRoutingStep/ott-mainA
+  pMainBDlqName:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/pipeline/rDeadLetterQueueRoutingStep/ott-mainB
+  pLutLambdaName:
+    Type: String
+    Default: sdlf-ott-mainLUT-refresh
+  pAlarmPeriodSeconds:
+    Type: Number
+    Default: 300
+
+Resources:
+
+  ######## CLOUDWATCH DASHBOARD ########
+
+  rPipelineDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: sdlf-ott-searchevents-pipeline
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "text",
+              "x": 0, "y": 0, "width": 24, "height": 1,
+              "properties": {
+                "markdown": "# OTT Search Events Pipeline — fpt / ott / prod"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 1, "width": 8, "height": 6,
+              "properties": {
+                "title": "Stage A SM Executions",
+                "metrics": [
+                  ["AWS/States","ExecutionsSucceeded","StateMachineArn","${pStageASmArn}",{"label":"Succeeded","color":"#2ca02c"}],
+                  ["AWS/States","ExecutionsFailed","StateMachineArn","${pStageASmArn}",{"label":"Failed","color":"#d62728"}],
+                  ["AWS/States","ExecutionsTimedOut","StateMachineArn","${pStageASmArn}",{"label":"Timed Out","color":"#ff7f0e"}]
+                ],
+                "view": "timeSeries",
+                "stat": "Sum",
+                "period": 3600,
+                "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 8, "y": 1, "width": 8, "height": 6,
+              "properties": {
+                "title": "Stage B SM Executions",
+                "metrics": [
+                  ["AWS/States","ExecutionsSucceeded","StateMachineArn","${pStageBSmArn}",{"label":"Succeeded","color":"#2ca02c"}],
+                  ["AWS/States","ExecutionsFailed","StateMachineArn","${pStageBSmArn}",{"label":"Failed","color":"#d62728"}],
+                  ["AWS/States","ExecutionsTimedOut","StateMachineArn","${pStageBSmArn}",{"label":"Timed Out","color":"#ff7f0e"}]
+                ],
+                "view": "timeSeries",
+                "stat": "Sum",
+                "period": 3600,
+                "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 16, "y": 1, "width": 8, "height": 6,
+              "properties": {
+                "title": "DQ SM Executions",
+                "metrics": [
+                  ["AWS/States","ExecutionsSucceeded","StateMachineArn","${pDQSmArn}",{"label":"Succeeded","color":"#2ca02c"}],
+                  ["AWS/States","ExecutionsFailed","StateMachineArn","${pDQSmArn}",{"label":"Failed","color":"#d62728"}]
+                ],
+                "view": "timeSeries",
+                "stat": "Sum",
+                "period": 3600,
+                "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 7, "width": 12, "height": 6,
+              "properties": {
+                "title": "Stage B SM Duration (ms)",
+                "metrics": [
+                  ["AWS/States","ExecutionTime","StateMachineArn","${pStageBSmArn}",{"label":"p50","stat":"p50","color":"#1f77b4"}],
+                  ["AWS/States","ExecutionTime","StateMachineArn","${pStageBSmArn}",{"label":"p90","stat":"p90","color":"#ff7f0e"}],
+                  ["AWS/States","ExecutionTime","StateMachineArn","${pStageBSmArn}",{"label":"p99","stat":"p99","color":"#d62728"}]
+                ],
+                "view": "timeSeries",
+                "period": 86400,
+                "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12, "y": 7, "width": 12, "height": 6,
+              "properties": {
+                "title": "DLQ Depth",
+                "metrics": [
+                  ["AWS/SQS","ApproximateNumberOfMessagesVisible","QueueName","${pMainADlqName}",{"label":"Stage A DLQ","color":"#d62728"}],
+                  ["AWS/SQS","ApproximateNumberOfMessagesVisible","QueueName","${pMainBDlqName}",{"label":"Stage B DLQ","color":"#ff7f0e"}]
+                ],
+                "view": "timeSeries",
+                "stat": "Maximum",
+                "period": 300,
+                "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 13, "width": 12, "height": 6,
+              "properties": {
+                "title": "Glue Job — Elapsed Time (ms)",
+                "metrics": [
+                  ["Glue","glue.driver.aggregate.elapsedTime","JobName","${pGlueJobName}","JobRunId","ALL",{"label":"Elapsed","color":"#1f77b4"}]
+                ],
+                "view": "timeSeries",
+                "stat": "Average",
+                "period": 86400,
+                "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12, "y": 13, "width": 12, "height": 6,
+              "properties": {
+                "title": "Glue Job — Bytes Read from S3",
+                "metrics": [
+                  ["Glue","glue.ALL.s3.filesystem.read.bytes","JobName","${pGlueJobName}","JobRunId","ALL",{"label":"Bytes Read","color":"#2ca02c"}]
+                ],
+                "view": "timeSeries",
+                "stat": "Sum",
+                "period": 86400,
+                "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 19, "width": 12, "height": 6,
+              "properties": {
+                "title": "LUT Refresh Lambda — Invocations & Errors",
+                "metrics": [
+                  ["AWS/Lambda","Invocations","FunctionName","sdlf-ott-mainLUT-refresh",{"label":"Invocations","color":"#2ca02c","stat":"Sum"}],
+                  ["AWS/Lambda","Errors","FunctionName","sdlf-ott-mainLUT-refresh",{"label":"Errors","color":"#d62728","stat":"Sum"}]
+                ],
+                "view": "timeSeries",
+                "period": 86400,
+                "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12, "y": 19, "width": 12, "height": 6,
+              "properties": {
+                "title": "LUT Refresh Lambda — Duration (ms)",
+                "metrics": [
+                  ["AWS/Lambda","Duration","FunctionName","sdlf-ott-mainLUT-refresh",{"label":"p50","stat":"p50","color":"#1f77b4"}],
+                  ["AWS/Lambda","Duration","FunctionName","sdlf-ott-mainLUT-refresh",{"label":"p90","stat":"p90","color":"#ff7f0e"}],
+                  ["AWS/Lambda","Duration","FunctionName","sdlf-ott-mainLUT-refresh",{"label":"p99","stat":"p99","color":"#d62728"}]
+                ],
+                "view": "timeSeries",
+                "period": 86400,
+                "region": "${AWS::Region}"
+              }
+            }
+          ]
+        }
+
+  ######## CLOUDWATCH ALARMS ########
+
+  rAlarmStageBFailed:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sdlf-ott-mainB-sm-execution-failed
+      AlarmDescription: Stage B Step Functions SM has a failed execution
+      Namespace: AWS/States
+      MetricName: ExecutionsFailed
+      Dimensions:
+        - Name: StateMachineArn
+          Value: !Ref pStageBSmArn
+      Statistic: Sum
+      Period: !Ref pAlarmPeriodSeconds
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref pSnsTopicArn
+      OKActions:
+        - !Ref pSnsTopicArn
+
+  rAlarmDQFailed:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sdlf-ott-mainDQ-sm-execution-failed
+      AlarmDescription: Data Quality SM has a failed execution — curated table may have quality issues
+      Namespace: AWS/States
+      MetricName: ExecutionsFailed
+      Dimensions:
+        - Name: StateMachineArn
+          Value: !Ref pDQSmArn
+      Statistic: Sum
+      Period: !Ref pAlarmPeriodSeconds
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref pSnsTopicArn
+      OKActions:
+        - !Ref pSnsTopicArn
+
+  rAlarmStageADlq:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sdlf-ott-mainA-dlq-not-empty
+      AlarmDescription: Stage A DLQ has messages — S3 events failed to route to Stage A SM
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !Ref pMainADlqName
+      Statistic: Maximum
+      Period: !Ref pAlarmPeriodSeconds
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref pSnsTopicArn
+      OKActions:
+        - !Ref pSnsTopicArn
+
+  rAlarmStageBDlq:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sdlf-ott-mainB-dlq-not-empty
+      AlarmDescription: Stage B DLQ has messages — items failed to route to Stage B SM
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !Ref pMainBDlqName
+      Statistic: Maximum
+      Period: !Ref pAlarmPeriodSeconds
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref pSnsTopicArn
+      OKActions:
+        - !Ref pSnsTopicArn
+
+  rAlarmStageBDuration:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sdlf-ott-mainB-sm-duration-high
+      AlarmDescription: Stage B SM execution time exceeded 60 minutes (typical ~30 min)
+      Namespace: AWS/States
+      MetricName: ExecutionTime
+      Dimensions:
+        - Name: StateMachineArn
+          Value: !Ref pStageBSmArn
+      ExtendedStatistic: p90
+      Period: 86400
+      EvaluationPeriods: 1
+      Threshold: 3600000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref pSnsTopicArn
+
+  rAlarmLutRefreshErrors:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sdlf-ott-mainLUT-refresh-errors
+      AlarmDescription: LUT Refresh Lambda had errors — genre classifier zip may be stale
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref pLutLambdaName
+      Statistic: Sum
+      Period: !Ref pAlarmPeriodSeconds
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref pSnsTopicArn
+
+  rAlarmLutRefreshDuration:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sdlf-ott-mainLUT-refresh-near-timeout
+      AlarmDescription: LUT Refresh Lambda p90 duration exceeded 720s (80% of 900s limit)
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref pLutLambdaName
+      ExtendedStatistic: p90
+      Period: 86400
+      EvaluationPeriods: 1
+      Threshold: 720000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref pSnsTopicArn
+
+Outputs:
+  oPipelineReference:
+    Description: CodePipeline reference this stack has been deployed with
+    Value: !Ref pPipelineReference
+  oDashboardUrl:
+    Description: CloudWatch Dashboard URL
+    Value: !Sub https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=sdlf-ott-searchevents-pipeline

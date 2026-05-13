@@ -1,0 +1,7 @@
+output/
+*.zip
+__pycache__/
+.aws-sam/
+samconfig.toml
+*.pyc
+.env
