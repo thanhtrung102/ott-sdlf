@@ -36,6 +36,10 @@ Parameters:
   pKmsKeyArn:
     Type: AWS::SSM::Parameter::Value<String>
     Default: /sdlf/storage/rKMSKey/prod
+  pAthenaResultsBucket:
+    Type: String
+    Description: Bucket enforced by the sdlf-ott Athena workgroup for query results
+
 Resources:
 
   ######## IAM ########
@@ -77,12 +81,14 @@ Resources:
                   - s3:ListBucket
                 Resource:
                   - !Sub arn:${AWS::Partition}:s3:::${pStageBucket}
+                  - !Sub arn:${AWS::Partition}:s3:::${pAthenaResultsBucket}
               - Effect: Allow
                 Action:
                   - s3:PutObject
                   - s3:GetObject
                 Resource:
                   - !Sub arn:${AWS::Partition}:s3:::${pStageBucket}/athena-results/lut-refresh/*
+                  - !Sub arn:${AWS::Partition}:s3:::${pAthenaResultsBucket}/*
               - Effect: Allow
                 Action:
                   - athena:StartQueryExecution

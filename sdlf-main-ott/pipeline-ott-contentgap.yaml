@@ -29,6 +29,9 @@ Parameters:
   pKmsKeyArn:
     Type: AWS::SSM::Parameter::Value<String>
     Default: /sdlf/storage/rKMSKey/prod
+  pAthenaResultsBucket:
+    Type: String
+    Description: Bucket enforced by the sdlf-ott Athena workgroup for query results
 
 Resources:
 
@@ -65,6 +68,7 @@ Resources:
                   - s3:ListBucket
                 Resource:
                   - !Sub arn:${AWS::Partition}:s3:::${pStageBucket}
+                  - !Sub arn:${AWS::Partition}:s3:::${pAthenaResultsBucket}
               - Effect: Allow
                 Action:
                   - s3:GetObject
@@ -72,6 +76,7 @@ Resources:
                 Resource:
                   - !Sub arn:${AWS::Partition}:s3:::${pStageBucket}/athena-results/content-gap/*
                   - !Sub arn:${AWS::Partition}:s3:::${pStageBucket}/analytics/content-gap/*
+                  - !Sub arn:${AWS::Partition}:s3:::${pAthenaResultsBucket}/*
               - Effect: Allow
                 Action:
                   - athena:StartQueryExecution
