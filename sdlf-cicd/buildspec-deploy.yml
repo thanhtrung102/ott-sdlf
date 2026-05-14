@@ -25,17 +25,24 @@ phases:
       - STAGE_B_SM_ARN=$(aws ssm get-parameter --name "/sdlf/pipeline/rStateMachine/ott-mainB" --query "Parameter.Value" --output text --region $REGION)
       - echo "Account $ACCOUNT  KMS $KMS_KEY"
       - |
-        # One-time migration: delete gold quality stack if it still uses the old separate template.
-        # Safe to re-run: the unified template sets a different Description so this only fires once.
-        GOLD_DESC=$(aws cloudformation describe-stacks \
+        # One-time migration: delete gold quality stack if it is on the old separate template.
+        # Detection: old template has no pStageName parameter; new unified template always has it.
+        # Safe to re-run: once on the new template the length check returns 1 and this is skipped.
+        GOLD_HAS_NEW=$(aws cloudformation describe-stacks \
           --stack-name sdlf-pipeline-ott-goldquality --region $REGION \
-          --query "Stacks[0].Description" --output text 2>/dev/null || echo "NOT_FOUND")
-        if [[ "$GOLD_DESC" == "OTT Gold Layer Data Quality"* ]]; then
-          echo "One-time migration: deleting sdlf-pipeline-ott-goldquality for unified DQ template..."
-          aws cloudformation delete-stack \
-            --stack-name sdlf-pipeline-ott-goldquality --region $REGION
-          aws cloudformation wait stack-delete-complete \
-            --stack-name sdlf-pipeline-ott-goldquality --region $REGION
+          --query "length(Stacks[0].Parameters[?ParameterKey=='pStageName'])" \
+          --output text 2>/dev/null || echo "0")
+        if [ "$GOLD_HAS_NEW" = "0" ]; then
+          echo "Migrating sdlf-pipeline-ott-goldquality to unified DQ template..."
+          GOLD_STATUS=$(aws cloudformation describe-stacks \
+            --stack-name sdlf-pipeline-ott-goldquality --region $REGION \
+            --query "Stacks[0].StackStatus" --output text 2>/dev/null || echo "NOT_FOUND")
+          if [ "$GOLD_STATUS" != "NOT_FOUND" ]; then
+            aws cloudformation delete-stack \
+              --stack-name sdlf-pipeline-ott-goldquality --region $REGION
+            aws cloudformation wait stack-delete-complete \
+              --stack-name sdlf-pipeline-ott-goldquality --region $REGION
+          fi
           echo "Migration delete complete."
         fi
 
@@ -141,7 +148,7 @@ phases:
             --query "Stacks[0].StackStatus" --output text 2>/dev/null || echo "NOT_FOUND")
           echo "$stack: $STATUS"
           case $STATUS in
-            *_COMPLETE) ;;
+            CREATE_COMPLETE|UPDATE_COMPLETE) ;;
             *) echo "ERROR: $stack in unexpected state $STATUS"; exit 1 ;;
           esac
         done
