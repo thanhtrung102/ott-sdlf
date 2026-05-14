@@ -109,6 +109,7 @@ phases:
           pAthenaWorkgroupKmsKey=${ATHENA_WG_KMS}
 
         deploy sdlf-pipeline-ott-trending sdlf-main-ott/pipeline-ott-trending.yaml \
+          pGoldDatabaseName=fpt_ott_searchevents_gold \
           pAthenaResultsBucket=${ATHENA_RESULTS_BUCKET} \
           pAthenaWorkgroupKmsKey=${ATHENA_WG_KMS}
 
