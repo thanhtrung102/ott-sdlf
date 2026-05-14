@@ -113,6 +113,7 @@ Resources:
                 Action:
                   - glue:GetDatabase
                   - glue:GetTable
+                  - glue:GetPartitions
                   - glue:CreateTable
                   - glue:DeleteTable
                   - glue:UpdateTable
