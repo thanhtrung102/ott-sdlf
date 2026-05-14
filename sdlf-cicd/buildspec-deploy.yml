@@ -17,7 +17,27 @@ phases:
       - echo "Execution $PIPELINE_REFERENCE starting"
       - KMS_KEY=$(aws ssm get-parameter --name "/sdlf/storage/rKMSKey/prod" --query "Parameter.Value" --output text --region $REGION)
       - ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+      - STAGE_BUCKET=$(aws ssm get-parameter --name "/sdlf/storage/rStageBucket/prod" --query "Parameter.Value" --output text --region $REGION)
+      - ANALYTICS_BUCKET=$(aws ssm get-parameter --name "/sdlf/storage/rAnalyticsBucket/prod" --query "Parameter.Value" --output text --region $REGION)
+      - CURATED_DB=$(aws ssm get-parameter --name "/sdlf/dataset/rAnalyticsGlueDataCatalog/searchevents" --query "Parameter.Value" --output text --region $REGION)
+      - CURATED_CRAWLER=$(aws ssm get-parameter --name "/sdlf/dataset/rAnalyticsGlueCrawler/searchevents" --query "Parameter.Value" --output text --region $REGION)
+      - CRAWLER_ROLE=$(aws ssm get-parameter --name "/sdlf/dataset/rDatalakeCrawlerRole/searchevents" --query "Parameter.Value" --output text --region $REGION)
+      - STAGE_B_SM_ARN=$(aws ssm get-parameter --name "/sdlf/pipeline/rStateMachine/ott-mainB" --query "Parameter.Value" --output text --region $REGION)
       - echo "Account $ACCOUNT  KMS $KMS_KEY"
+      - |
+        # One-time migration: delete gold quality stack if it still uses the old separate template.
+        # Safe to re-run: the unified template sets a different Description so this only fires once.
+        GOLD_DESC=$(aws cloudformation describe-stacks \
+          --stack-name sdlf-pipeline-ott-goldquality --region $REGION \
+          --query "Stacks[0].Description" --output text 2>/dev/null || echo "NOT_FOUND")
+        if [[ "$GOLD_DESC" == "OTT Gold Layer Data Quality"* ]]; then
+          echo "One-time migration: deleting sdlf-pipeline-ott-goldquality for unified DQ template..."
+          aws cloudformation delete-stack \
+            --stack-name sdlf-pipeline-ott-goldquality --region $REGION
+          aws cloudformation wait stack-delete-complete \
+            --stack-name sdlf-pipeline-ott-goldquality --region $REGION
+          echo "Migration delete complete."
+        fi
 
   build:
     commands:
@@ -52,7 +72,21 @@ phases:
 
         deploy sdlf-pipeline-ott-mainB sdlf-main-ott/pipeline-ott-mainB.yaml
 
-        deploy sdlf-pipeline-ott-dataquality sdlf-main-ott/pipeline-ott-dataquality.yaml
+        deploy sdlf-pipeline-ott-dataquality sdlf-main-ott/pipeline-ott-dq-stage.yaml \
+          pStageName=mainDQ \
+          pDatabaseName=${CURATED_DB} \
+          pTableName=curated \
+          "pRulesetName=${CURATED_DB}_curated" \
+          pCrawlerName=${CURATED_CRAWLER} \
+          pCrawlerRoleArn=${CRAWLER_ROLE} \
+          pStageBucket=${STAGE_BUCKET} \
+          pKmsKeyArn=${KMS_KEY} \
+          pDataReadBucket=${ANALYTICS_BUCKET} \
+          pDataReadPrefix=ott/searchevents/ \
+          pResultsS3Prefix=dq-results/ott/searchevents \
+          pTriggerType=statesMachine \
+          pStageBSmArn=${STAGE_B_SM_ARN} \
+          pExportRoles=true
 
         deploy sdlf-pipeline-ott-lutrefresh sdlf-main-ott/pipeline-ott-lutrefresh.yaml \
           pMaxNewKeywords=${MAX_NEW_KEYWORDS} \
@@ -62,7 +96,22 @@ phases:
 
         deploy sdlf-pipeline-ott-trending sdlf-main-ott/pipeline-ott-trending.yaml
 
-        deploy sdlf-pipeline-ott-goldquality sdlf-main-ott/pipeline-ott-goldquality.yaml
+        deploy sdlf-pipeline-ott-goldquality sdlf-main-ott/pipeline-ott-dq-stage.yaml \
+          pStageName=mainGoldDQ \
+          pDatabaseName=sdlf_ott_gold \
+          pTableName=keyword_trends \
+          pRulesetName=sdlf_ott_gold_keyword_trends \
+          pCrawlerName=${CURATED_CRAWLER} \
+          pCrawlerRoleArn=${CRAWLER_ROLE} \
+          pStageBucket=${STAGE_BUCKET} \
+          pKmsKeyArn=${KMS_KEY} \
+          pDataReadBucket=${STAGE_BUCKET} \
+          pDataReadPrefix=ott/searchevents/gold/ \
+          pResultsS3Prefix=dq-results/ott/gold \
+          pTriggerType=customEvent \
+          pCustomEventSource=sdlf.ott.trending \
+          "pCustomEventDetailType=Trending Report Completed" \
+          pExportRoles=false
 
         deploy sdlf-pipeline-ott-monitoring sdlf-main-ott/pipeline-ott-monitoring.yaml
 

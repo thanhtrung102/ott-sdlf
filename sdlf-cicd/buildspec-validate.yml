@@ -15,11 +15,10 @@ phases:
           scripts/ott-search-glue-job.yaml \
           sdlf-main-ott/pipeline-ott-mainA.yaml \
           sdlf-main-ott/pipeline-ott-mainB.yaml \
-          sdlf-main-ott/pipeline-ott-dataquality.yaml \
+          sdlf-main-ott/pipeline-ott-dq-stage.yaml \
           sdlf-main-ott/pipeline-ott-lutrefresh.yaml \
           sdlf-main-ott/pipeline-ott-contentgap.yaml \
           sdlf-main-ott/pipeline-ott-trending.yaml \
-          sdlf-main-ott/pipeline-ott-goldquality.yaml \
           sdlf-main-ott/pipeline-ott-monitoring.yaml \
           sdlf-main-ott/pipeline-ott-lakeformation.yaml \
           sdlf-main-ott/pipeline-ott-api.yaml \
@@ -32,11 +31,10 @@ phases:
           scripts/ott-search-glue-job.yaml \
           sdlf-main-ott/pipeline-ott-mainA.yaml \
           sdlf-main-ott/pipeline-ott-mainB.yaml \
-          sdlf-main-ott/pipeline-ott-dataquality.yaml \
+          sdlf-main-ott/pipeline-ott-dq-stage.yaml \
           sdlf-main-ott/pipeline-ott-lutrefresh.yaml \
           sdlf-main-ott/pipeline-ott-contentgap.yaml \
           sdlf-main-ott/pipeline-ott-trending.yaml \
-          sdlf-main-ott/pipeline-ott-goldquality.yaml \
           sdlf-main-ott/pipeline-ott-monitoring.yaml \
           sdlf-main-ott/pipeline-ott-lakeformation.yaml \
           sdlf-main-ott/pipeline-ott-api.yaml; do

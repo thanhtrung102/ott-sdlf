@@ -1,38 +1,81 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  OTT Gold Layer Data Quality — Glue DQ checks on sdlf_ott_gold.keyword_trends
-  after every Trending Lambda run. Triggered by the custom EventBridge event
-  emitted by the Trending Lambda (source: sdlf.ott.trending).
-  Source: pipeline-ott-goldquality.yaml
+  OTT Data Quality Stage — reusable; deployed twice:
+  sdlf-pipeline-ott-dataquality (curated table after Stage B) and
+  sdlf-pipeline-ott-goldquality (gold keyword_trends after Trending Lambda).
 
 Parameters:
   pPipelineReference:
     Type: String
     Default: none
-  pGoldDatabaseName:
+  pStageName:
     Type: String
-    Default: sdlf_ott_gold
-    Description: Glue database for the gold keyword_trends table
-  pGoldBucket:
-    Type: AWS::SSM::Parameter::Value<String>
-    Default: /sdlf/storage/rStageBucket/prod
-    Description: S3 bucket that holds the gold layer
+    Description: Stage identifier used in all resource names (mainDQ or mainGoldDQ)
+  pDatabaseName:
+    Type: String
+    Description: Glue catalog database name
+  pTableName:
+    Type: String
+    Description: Glue table to run DQ on
+  pRulesetName:
+    Type: String
+    Description: Glue DQ ruleset name (auto-created on first run)
+  pCrawlerName:
+    Type: String
+    Description: Glue crawler to start after DQ evaluation passes
+  pCrawlerRoleArn:
+    Type: String
+    Description: Crawler IAM role ARN for iam:PassRole
   pStageBucket:
-    Type: AWS::SSM::Parameter::Value<String>
-    Default: /sdlf/storage/rStageBucket/prod
+    Type: String
+    Description: Stage S3 bucket — DQ results written here
   pKmsKeyArn:
-    Type: AWS::SSM::Parameter::Value<String>
-    Default: /sdlf/storage/rKMSKey/prod
-  pGoldCrawlerName:
-    Type: AWS::SSM::Parameter::Value<String>
-    Default: /sdlf/dataset/rAnalyticsGlueCrawler/searchevents
-    Description: Glue crawler to refresh the gold Glue catalog after DQ passes
+    Type: String
+    Description: KMS key ARN for encryption
+  pDataReadBucket:
+    Type: String
+    Description: S3 bucket the Glue DQ scan reads source data from
+  pDataReadPrefix:
+    Type: String
+    Description: Prefix within pDataReadBucket for read access (no leading slash)
+  pResultsS3Prefix:
+    Type: String
+    Description: Key prefix in pStageBucket for DQ result files (no trailing slash)
+  pTriggerType:
+    Type: String
+    AllowedValues: [statesMachine, customEvent]
+    Description: >
+      statesMachine = triggered by Step Functions status change on Stage B;
+      customEvent = triggered by a custom EventBridge event source
+  pStageBSmArn:
+    Type: String
+    Default: ""
+    Description: Stage B state machine ARN — required when pTriggerType=statesMachine
+  pCustomEventSource:
+    Type: String
+    Default: ""
+    Description: EventBridge source string — required when pTriggerType=customEvent
+  pCustomEventDetailType:
+    Type: String
+    Default: ""
+    Description: EventBridge detail-type — required when pTriggerType=customEvent
+  pExportRoles:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: >
+      Export execution and Glue role ARNs to SSM.
+      Set true for the curated DQ instance, which the LF stack references.
+
+Conditions:
+  IsStatesMachineTrigger: !Equals [!Ref pTriggerType, statesMachine]
+  ExportRoles: !Equals [!Ref pExportRoles, "true"]
 
 Resources:
 
   ######## IAM ########
 
-  rGoldDQExecutionRole:
+  rDQExecutionRole:
     Type: AWS::IAM::Role
     Properties:
       Path: /sdlf-ott/
@@ -47,7 +90,7 @@ Resources:
               StringEquals:
                 aws:SourceAccount: !Ref AWS::AccountId
       Policies:
-        - PolicyName: sdlf-ott-goldquality-sm
+        - PolicyName: !Sub sdlf-ott-${pStageName}-sm
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
@@ -64,17 +107,16 @@ Resources:
                   - glue:GetDatabase
                 Resource:
                   - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:catalog
-                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/${pGoldDatabaseName}
-                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/${pGoldDatabaseName}/*
+                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/${pDatabaseName}
+                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/${pDatabaseName}/*
               - Effect: Allow
                 Action:
                   - glue:StartCrawler
-                Resource:
-                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:crawler/${pGoldCrawlerName}
+                Resource: !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:crawler/${pCrawlerName}
               - Effect: Allow
-                Action:
-                  - iam:PassRole
+                Action: iam:PassRole
                 Resource:
+                  - !Ref pCrawlerRoleArn
                   - !GetAtt rGlueDQRole.Arn
                 Condition:
                   StringEquals:
@@ -114,7 +156,7 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
       Policies:
-        - PolicyName: sdlf-ott-glue-gold-dq-s3
+        - PolicyName: !Sub sdlf-ott-${pStageName}-glue-dq-s3
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
@@ -123,25 +165,20 @@ Resources:
                   - s3:PutObject
                   - s3:GetObject
                   - s3:DeleteObject
-                Resource:
-                  - !Sub arn:${AWS::Partition}:s3:::${pStageBucket}/dq-results/ott/gold/*
+                Resource: !Sub arn:${AWS::Partition}:s3:::${pStageBucket}/${pResultsS3Prefix}/*
               - Effect: Allow
                 Action:
                   - s3:GetBucketLocation
                   - s3:ListBucket
-                Resource:
-                  - !Sub arn:${AWS::Partition}:s3:::${pStageBucket}
+                Resource: !Sub arn:${AWS::Partition}:s3:::${pStageBucket}
               - Effect: Allow
-                Action:
-                  - s3:GetObject
-                Resource:
-                  - !Sub arn:${AWS::Partition}:s3:::${pGoldBucket}/ott/searchevents/gold/*
+                Action: s3:GetObject
+                Resource: !Sub arn:${AWS::Partition}:s3:::${pDataReadBucket}/${pDataReadPrefix}*
               - Effect: Allow
                 Action:
                   - s3:GetBucketLocation
                   - s3:ListBucket
-                Resource:
-                  - !Sub arn:${AWS::Partition}:s3:::${pGoldBucket}
+                Resource: !Sub arn:${AWS::Partition}:s3:::${pDataReadBucket}
               - Effect: Allow
                 Action:
                   - glue:GetTable
@@ -149,17 +186,15 @@ Resources:
                   - glue:GetPartitions
                 Resource:
                   - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:catalog
-                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/${pGoldDatabaseName}
-                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/${pGoldDatabaseName}/*
+                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/${pDatabaseName}
+                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/${pDatabaseName}/*
               - Effect: Allow
                 Action:
                   - kms:Decrypt
                   - kms:GenerateDataKey
-                Resource:
-                  - !Ref pKmsKeyArn
+                Resource: !Ref pKmsKeyArn
               - Effect: Allow
-                Action:
-                  - lakeformation:GetDataAccess
+                Action: lakeformation:GetDataAccess
                 Resource: "*"
               - Effect: Allow
                 Action:
@@ -180,43 +215,42 @@ Resources:
               Service: events.amazonaws.com
             Action: sts:AssumeRole
       Policies:
-        - PolicyName: sdlf-ott-goldquality-eb-start-sm
+        - PolicyName: !Sub sdlf-ott-${pStageName}-eb-start-sm
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
               - Effect: Allow
-                Action:
-                  - states:StartExecution
-                Resource:
-                  - !Ref rGoldDQStateMachine
+                Action: states:StartExecution
+                Resource: !Ref rDQStateMachine
 
   ######## CLOUDWATCH LOGS ########
 
-  rGoldDQSmLogGroup:
+  rDQSmLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: /sdlf/statemachine/ott-mainGoldDQ
+      LogGroupName: !Sub /sdlf/statemachine/ott-${pStageName}
       RetentionInDays: 30
 
   ######## STEP FUNCTIONS ########
 
-  rGoldDQStateMachine:
+  rDQStateMachine:
     Type: AWS::StepFunctions::StateMachine
+    DependsOn: rDQSmLogGroup
     Properties:
-      StateMachineName: sdlf-ott-mainGoldDQ-sm
-      RoleArn: !GetAtt rGoldDQExecutionRole.Arn
+      StateMachineName: !Sub sdlf-ott-${pStageName}-sm
+      RoleArn: !GetAtt rDQExecutionRole.Arn
       LoggingConfiguration:
         Level: ERROR
         IncludeExecutionData: false
         Destinations:
           - CloudWatchLogsLogGroup:
-              LogGroupArn: !GetAtt rGoldDQSmLogGroup.Arn
+              LogGroupArn: !GetAtt rDQSmLogGroup.Arn
       TracingConfiguration:
         Enabled: true
       DefinitionString: !Sub
         - |
           {
-            "Comment": "OTT Gold Layer Data Quality checks on sdlf_ott_gold.keyword_trends",
+            "Comment": "OTT ${pStageName} Data Quality on ${pDatabaseName}.${pTableName}",
             "StartAt": "StartRecommendationRun",
             "States": {
               "StartRecommendationRun": {
@@ -225,11 +259,11 @@ Resources:
                 "Parameters": {
                   "DataSource": {
                     "GlueTable": {
-                      "DatabaseName": "${pGoldDatabaseName}",
-                      "TableName": "keyword_trends"
+                      "DatabaseName": "${pDatabaseName}",
+                      "TableName": "${pTableName}"
                     }
                   },
-                  "CreatedRulesetName": "${pGoldDatabaseName}_keyword_trends",
+                  "CreatedRulesetName": "${pRulesetName}",
                   "Role": "${GlueDQRoleArn}",
                   "NumberOfWorkers": 5
                 },
@@ -238,7 +272,7 @@ Resources:
                 "Catch": [
                   {
                     "ErrorEquals": ["Glue.InvalidInputException"],
-                    "Comment": "Ruleset already exists — skip to evaluation",
+                    "Comment": "Ruleset already exists - skip to evaluation",
                     "ResultPath": null,
                     "Next": "StartEvaluationRun"
                   }
@@ -280,16 +314,16 @@ Resources:
                 "Parameters": {
                   "DataSource": {
                     "GlueTable": {
-                      "DatabaseName": "${pGoldDatabaseName}",
-                      "TableName": "keyword_trends"
+                      "DatabaseName": "${pDatabaseName}",
+                      "TableName": "${pTableName}"
                     }
                   },
                   "Role": "${GlueDQRoleArn}",
                   "NumberOfWorkers": 5,
-                  "RulesetNames": ["${pGoldDatabaseName}_keyword_trends"],
+                  "RulesetNames": ["${pRulesetName}"],
                   "AdditionalRunOptions": {
                     "CloudWatchMetricsEnabled": true,
-                    "ResultsS3Prefix": "s3://${pStageBucket}/dq-results/ott/gold/"
+                    "ResultsS3Prefix": "s3://${pStageBucket}/${pResultsS3Prefix}/"
                   }
                 },
                 "ResultPath": "$.evaluation_run",
@@ -315,7 +349,7 @@ Resources:
                   {
                     "Variable": "$.evaluation_status.Status",
                     "StringEquals": "SUCCEEDED",
-                    "Next": "StartGoldCrawler"
+                    "Next": "StartCrawler"
                   },
                   {
                     "Variable": "$.evaluation_status.Status",
@@ -325,11 +359,11 @@ Resources:
                 ],
                 "Default": "WaitForEvaluation"
               },
-              "StartGoldCrawler": {
+              "StartCrawler": {
                 "Type": "Task",
                 "Resource": "arn:aws:states:::aws-sdk:glue:startCrawler",
                 "Parameters": {
-                  "Name": "${pGoldCrawlerName}"
+                  "Name": "${pCrawlerName}"
                 },
                 "ResultPath": null,
                 "Retry": [
@@ -347,8 +381,8 @@ Resources:
               },
               "DQFailed": {
                 "Type": "Fail",
-                "Error": "GoldDataQualityCheckFailed",
-                "Cause": "Glue DQ evaluation failed on sdlf_ott_gold.keyword_trends"
+                "Error": "DataQualityCheckFailed",
+                "Cause": "Glue DQ evaluation did not pass"
               }
             }
           }
@@ -356,39 +390,51 @@ Resources:
 
   ######## EVENTBRIDGE ########
 
-  rGoldDQTriggerRule:
+  rDQTriggerRule:
     Type: AWS::Events::Rule
     Properties:
-      Name: sdlf-ott-mainGoldDQ-trigger
-      Description: Start Gold DQ SM when Trending Lambda completes
-      EventPattern:
-        source:
-          - sdlf.ott.trending
-        detail-type:
-          - Trending Report Completed
+      Name: !Sub sdlf-ott-${pStageName}-trigger
+      Description: !Sub Start ${pStageName} DQ state machine
+      EventPattern: !If
+        - IsStatesMachineTrigger
+        - !Sub '{"source":["aws.states"],"detail-type":["Step Functions Execution Status Change"],"detail":{"status":["SUCCEEDED"],"stateMachineArn":["${pStageBSmArn}"]}}'
+        - !Sub '{"source":["${pCustomEventSource}"],"detail-type":["${pCustomEventDetailType}"]}'
       State: ENABLED
       Targets:
-        - Id: sdlf-ott-mainGoldDQ-sm-target
-          Arn: !Ref rGoldDQStateMachine
+        - Id: !Sub sdlf-ott-${pStageName}-sm-target
+          Arn: !Ref rDQStateMachine
           RoleArn: !GetAtt rEventBridgeRole.Arn
 
   ######## SSM ########
 
-  rGoldDQStateMachineSsm:
+  rDQStateMachineSsm:
     Type: AWS::SSM::Parameter
     Properties:
-      Name: /sdlf/pipeline/rStateMachine/ott-mainGoldDQ
+      Name: !Sub /sdlf/pipeline/rStateMachine/ott-${pStageName}
       Type: String
-      Value: !Ref rGoldDQStateMachine
-      Description: ARN of the OTT Gold Layer Data Quality State Machine
+      Value: !Ref rDQStateMachine
+      Description: !Sub ARN of the OTT ${pStageName} Data Quality State Machine
+
+  rDQExecRoleSsm:
+    Condition: ExportRoles
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /sdlf/pipeline/rRole/ott-${pStageName}Exec
+      Type: String
+      Value: !GetAtt rDQExecutionRole.Arn
+      Description: !Sub DQ SM execution role ARN for ${pStageName} (used by LF stack)
+
+  rDQGlueRoleSsm:
+    Condition: ExportRoles
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /sdlf/pipeline/rRole/ott-${pStageName}Glue
+      Type: String
+      Value: !GetAtt rGlueDQRole.Arn
+      Description: !Sub Glue DQ role ARN for ${pStageName} (used by LF stack)
 
 Outputs:
   oPipelineReference:
-    Description: CodePipeline reference this stack has been deployed with
     Value: !Ref pPipelineReference
-  oGoldDQStateMachineArn:
-    Description: ARN of the Gold DQ State Machine
-    Value: !Ref rGoldDQStateMachine
-  oTriggerRuleArn:
-    Description: EventBridge rule ARN
-    Value: !GetAtt rGoldDQTriggerRule.Arn
+  oDQStateMachineArn:
+    Value: !Ref rDQStateMachine
