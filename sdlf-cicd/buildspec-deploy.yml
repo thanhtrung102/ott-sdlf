@@ -110,6 +110,7 @@ phases:
 
         deploy sdlf-pipeline-ott-trending sdlf-main-ott/pipeline-ott-trending.yaml \
           pGoldDatabaseName=fpt_ott_searchevents_gold \
+          pGoldBucket=/sdlf/storage/rAnalyticsBucket/prod \
           pAthenaResultsBucket=${ATHENA_RESULTS_BUCKET} \
           pAthenaWorkgroupKmsKey=${ATHENA_WG_KMS}
 
@@ -117,12 +118,12 @@ phases:
           pStageName=mainGoldDQ \
           pDatabaseName=fpt_ott_searchevents_gold \
           pTableName=keyword_trends \
-          pRulesetName=sdlf_ott_gold_keyword_trends \
+          pRulesetName=fpt_ott_searchevents_gold_keyword_trends \
           pCrawlerName=${CURATED_CRAWLER} \
           pCrawlerRoleArn=${CRAWLER_ROLE} \
           pStageBucket=${STAGE_BUCKET} \
           pKmsKeyArn=${KMS_KEY} \
-          pDataReadBucket=${STAGE_BUCKET} \
+          pDataReadBucket=${ANALYTICS_BUCKET} \
           pDataReadPrefix=ott/searchevents/gold/ \
           pResultsS3Prefix=dq-results/ott/gold \
           pTriggerType=customEvent \

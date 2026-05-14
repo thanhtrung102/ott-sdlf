@@ -116,6 +116,7 @@ Resources:
                   - glue:CreateTable
                   - glue:DeleteTable
                   - glue:UpdateTable
+                  - glue:BatchCreatePartition
                 Resource:
                   - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:catalog
                   - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/${pGoldDatabaseName}
