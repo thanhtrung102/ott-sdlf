@@ -12,7 +12,7 @@ phases:
       - echo "=== cfn-lint ==="
       - |
         cfn-lint \
-          scripts/ott-search-glue-job.yaml \
+          sdlf-main-ott/pipeline-ott-glue-job.yaml \
           sdlf-main-ott/pipeline-ott-mainA.yaml \
           sdlf-main-ott/pipeline-ott-mainB.yaml \
           sdlf-main-ott/pipeline-ott-dq-stage.yaml \
@@ -28,7 +28,7 @@ phases:
       - echo "=== CloudFormation validate-template ==="
       - |
         for template in \
-          scripts/ott-search-glue-job.yaml \
+          sdlf-main-ott/pipeline-ott-glue-job.yaml \
           sdlf-main-ott/pipeline-ott-mainA.yaml \
           sdlf-main-ott/pipeline-ott-mainB.yaml \
           sdlf-main-ott/pipeline-ott-dq-stage.yaml \
