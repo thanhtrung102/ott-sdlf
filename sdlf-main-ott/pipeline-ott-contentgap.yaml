@@ -386,6 +386,51 @@ Resources:
       Value: !GetAtt rContentGapRole.Arn
       Description: IAM role ARN for the OTT Content Gap Lambda (used by LF stack)
 
+  ######## GLUE CATALOG ########
+
+  rContentGapsTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref pDatabaseName
+      TableInput:
+        Name: content_gaps
+        Description: Abandoned keyword content gaps — date-partitioned CSV from Content Gap Lambda
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: csv
+          skip.header.line.count: "1"
+          projection.enabled: "true"
+          projection.dt.type: date
+          projection.dt.format: yyyy-MM-dd
+          projection.dt.range: "2022-01-01,NOW+1YEARS"
+          projection.dt.interval: "1"
+          projection.dt.interval.unit: DAYS
+          storage.location.template: !Sub s3://${pStageBucket}/analytics/content-gap/${!dt}/
+        StorageDescriptor:
+          Location: !Sub s3://${pStageBucket}/analytics/content-gap/
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.serde2.OpenCSVSerde
+            Parameters:
+              separatorChar: ","
+              quoteChar: '"'
+          Columns:
+            - Name: keyword_norm
+              Type: string
+            - Name: derived_genre
+              Type: string
+            - Name: searches
+              Type: bigint
+            - Name: abandoned
+              Type: bigint
+            - Name: abandon_rate_pct
+              Type: double
+        PartitionKeys:
+          - Name: dt
+            Type: string
+
 Outputs:
   oPipelineReference:
     Description: CodePipeline reference this stack has been deployed with

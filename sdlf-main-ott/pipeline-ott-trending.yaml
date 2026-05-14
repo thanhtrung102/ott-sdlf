@@ -475,6 +475,106 @@ Resources:
       Value: !GetAtt rTrendingRole.Arn
       Description: IAM role ARN for the OTT Trending Lambda (used by LF stack)
 
+  ######## GLUE CATALOG ########
+
+  rGoldDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Ref pGoldDatabaseName
+        Description: Gold layer — keyword trends aggregated from OTT search events
+
+  rTrendingAllTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref pDatabaseName
+      TableInput:
+        Name: trending_all
+        Description: Trending keywords (all genres) — date-partitioned CSV from Trending Lambda
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: csv
+          skip.header.line.count: "1"
+          projection.enabled: "true"
+          projection.dt.type: date
+          projection.dt.format: yyyy-MM-dd
+          projection.dt.range: "2022-01-01,NOW+1YEARS"
+          projection.dt.interval: "1"
+          projection.dt.interval.unit: DAYS
+          storage.location.template: !Sub s3://${pStageBucket}/analytics/trending/${!dt}/
+        StorageDescriptor:
+          Location: !Sub s3://${pStageBucket}/analytics/trending/
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.serde2.OpenCSVSerde
+            Parameters:
+              separatorChar: ","
+              quoteChar: '"'
+          Columns:
+            - Name: keyword_norm
+              Type: string
+            - Name: derived_genre
+              Type: string
+            - Name: current_cnt
+              Type: bigint
+            - Name: baseline_cnt
+              Type: bigint
+            - Name: growth_multiplier
+              Type: string
+            - Name: is_new_keyword
+              Type: string
+        PartitionKeys:
+          - Name: dt
+            Type: string
+
+  rTrendingUnknownTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref pDatabaseName
+      TableInput:
+        Name: trending_unknown
+        Description: Trending UNKNOWN-genre keywords — LUT refresh priority targets
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: csv
+          skip.header.line.count: "1"
+          projection.enabled: "true"
+          projection.dt.type: date
+          projection.dt.format: yyyy-MM-dd
+          projection.dt.range: "2022-01-01,NOW+1YEARS"
+          projection.dt.interval: "1"
+          projection.dt.interval.unit: DAYS
+          storage.location.template: !Sub s3://${pStageBucket}/analytics/trending/${!dt}/
+        StorageDescriptor:
+          Location: !Sub s3://${pStageBucket}/analytics/trending/
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.serde2.OpenCSVSerde
+            Parameters:
+              separatorChar: ","
+              quoteChar: '"'
+          Columns:
+            - Name: keyword_norm
+              Type: string
+            - Name: derived_genre
+              Type: string
+            - Name: current_cnt
+              Type: bigint
+            - Name: baseline_cnt
+              Type: bigint
+            - Name: growth_multiplier
+              Type: string
+            - Name: is_new_keyword
+              Type: string
+        PartitionKeys:
+          - Name: dt
+            Type: string
+
 Outputs:
   oPipelineReference:
     Description: CodePipeline reference this stack has been deployed with

@@ -5,6 +5,12 @@ Parameters:
   pPipelineReference:
     Type: String
     Default: none
+  pRawBucket:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/storage/rRawBucket/prod
+  pKmsKeyArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/storage/rKMSKey/prod
 
 Resources:
   rMainB:
@@ -39,3 +45,54 @@ Resources:
             "--OUTPUT_LOCATION": "s3://{{resolve:ssm:/sdlf/storage/rAnalyticsBucket/prod}}/ott/searchevents/curated/",
             "--PUSH_DOWN_PREDICATE": "all"
           }
+
+  ######## RAW CATALOG ########
+
+  rRawCrawlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sdlf-ott-raw-crawler-role
+      Path: /sdlf-ott/
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: sdlf-ott-raw-crawler-policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${pRawBucket}
+                  - !Sub arn:${AWS::Partition}:s3:::${pRawBucket}/ott/searchevents/*
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:DescribeKey
+                Resource: !Ref pKmsKeyArn
+
+  rRawCrawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: sdlf-searchevents-raw-crawler
+      Role: !GetAtt rRawCrawlerRole.Arn
+      DatabaseName: fpt_ott_searchevents_raw
+      Targets:
+        S3Targets:
+          - Path: !Sub s3://${pRawBucket}/ott/searchevents/
+      SchemaChangePolicy:
+        UpdateBehavior: UPDATE_IN_DATABASE
+        DeleteBehavior: LOG
+      RecrawlPolicy:
+        RecrawlBehavior: CRAWL_NEW_FOLDERS_ONLY
+      Schedule:
+        ScheduleExpression: "cron(30 19 * * ? *)"
