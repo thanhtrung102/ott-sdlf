@@ -131,8 +131,22 @@ phases:
 
         deploy sdlf-pipeline-ott-monitoring sdlf-main-ott/pipeline-ott-monitoring.yaml
 
-        deploy sdlf-pipeline-ott-lakeformation sdlf-main-ott/pipeline-ott-lakeformation.yaml \
-          pStageBucket=${STAGE_BUCKET}
+        deploy sdlf-pipeline-ott-lakeformation sdlf-main-ott/pipeline-ott-lakeformation.yaml
+
+        # DATA_LOCATION_ACCESS for Trending CTAS to gold prefix in LF-registered stage bucket.
+        # Managed via CLI (not CFN) — AWS::LakeFormation::PrincipalPermissions for DataLocation
+        # has a known CFN stabilization issue. Grant is idempotent.
+        TRENDING_ROLE_PHYS=$(aws cloudformation describe-stack-resource \
+          --stack-name sdlf-pipeline-ott-trending \
+          --logical-resource-id rTrendingRole --region $REGION \
+          --query "StackResourceDetail.PhysicalResourceId" --output text)
+        TRENDING_ROLE_ARN="arn:aws:iam::${ACCOUNT}:role/sdlf-ott/${TRENDING_ROLE_PHYS}"
+        aws lakeformation grant-permissions \
+          --principal "DataLakePrincipalIdentifier=${TRENDING_ROLE_ARN}" \
+          --resource "{\"DataLocation\":{\"CatalogId\":\"${ACCOUNT}\",\"ResourceArn\":\"arn:aws:s3:::${STAGE_BUCKET}/ott/searchevents/gold/\"}}" \
+          --permissions DATA_LOCATION_ACCESS \
+          --region $REGION || true
+        echo "DATA_LOCATION_ACCESS grant applied for $TRENDING_ROLE_ARN"
 
         deploy sdlf-pipeline-ott-api sdlf-main-ott/pipeline-ott-api.yaml
 
