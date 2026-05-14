@@ -477,14 +477,6 @@ Resources:
 
   ######## GLUE CATALOG ########
 
-  rGoldDatabase:
-    Type: AWS::Glue::Database
-    Properties:
-      CatalogId: !Ref AWS::AccountId
-      DatabaseInput:
-        Name: !Ref pGoldDatabaseName
-        Description: Gold layer — keyword trends aggregated from OTT search events
-
   rTrendingAllTable:
     Type: AWS::Glue::Table
     Properties:
