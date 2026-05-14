@@ -82,7 +82,8 @@ CREATE TABLE {gold_db}.keyword_trends
 WITH (
     format              = 'PARQUET',
     parquet_compression = 'SNAPPY',
-    external_location   = '{gold_location}'
+    external_location   = '{gold_location}',
+    partitioned_by      = ARRAY['trend_date']
 )
 AS
 WITH agg AS (
@@ -270,6 +271,9 @@ def write_gold_table():
     return count
 
 
+_SUBDIR = {"trending_all": "all", "trending_unknown": "unknown"}
+
+
 def lambda_handler(event, context):
     logger.info(
         f"Trending report triggered — source: {event.get('source', '?')} "
@@ -282,7 +286,6 @@ def lambda_handler(event, context):
     base_start = str(today - timedelta(days=35))
     base_end   = str(today - timedelta(days=28))
     dt = str(today)
-    prefix = f"{ANALYTICS_PREFIX}{dt}/"
 
     use_fallback = not has_baseline_data(base_start, base_end)
     if use_fallback:
@@ -301,7 +304,8 @@ def lambda_handler(event, context):
             headers, rows = run_trending_query(
                 cur_start, cur_end, base_start, base_end, use_fallback, genre_filter,
             )
-            summary[name] = write_csv(f"{prefix}{name}.csv", headers, rows)
+            report_prefix = f"{ANALYTICS_PREFIX}{_SUBDIR[name]}/{dt}/"
+            summary[name] = write_csv(f"{report_prefix}{name}.csv", headers, rows)
         except Exception as e:
             logger.error(f"{name} failed: {e}")
             summary[name] = -1
@@ -321,7 +325,8 @@ def lambda_handler(event, context):
         f"Trending keywords (all genres): {summary.get('trending_all', 0)}\n"
         f"Trending UNKNOWN (LUT targets): {summary.get('trending_unknown', 0)}\n"
         f"Gold table rows written: {summary.get('gold_rows', 0)}\n"
-        f"Reports: s3://{STAGE_BUCKET}/{prefix}\n"
+        f"All:     s3://{STAGE_BUCKET}/{ANALYTICS_PREFIX}all/{dt}/\n"
+        f"Unknown: s3://{STAGE_BUCKET}/{ANALYTICS_PREFIX}unknown/{dt}/\n"
         f"Errors: {errors}"
     )
     sns.publish(
@@ -333,7 +338,10 @@ def lambda_handler(event, context):
         "dt": dt,
         "mode": mode,
         "reports": summary,
-        "prefix": f"s3://{STAGE_BUCKET}/{prefix}",
+        "prefixes": {
+            "all":     f"s3://{STAGE_BUCKET}/{ANALYTICS_PREFIX}all/{dt}/",
+            "unknown": f"s3://{STAGE_BUCKET}/{ANALYTICS_PREFIX}unknown/{dt}/",
+        },
         "errors": errors,
     }
     events.put_events(Entries=[{

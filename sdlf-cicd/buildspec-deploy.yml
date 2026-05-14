@@ -114,7 +114,7 @@ phases:
 
         deploy sdlf-pipeline-ott-goldquality sdlf-main-ott/pipeline-ott-dq-stage.yaml \
           pStageName=mainGoldDQ \
-          pDatabaseName=sdlf_ott_gold \
+          pDatabaseName=fpt_ott_searchevents_gold \
           pTableName=keyword_trends \
           pRulesetName=sdlf_ott_gold_keyword_trends \
           pCrawlerName=${CURATED_CRAWLER} \
@@ -140,7 +140,7 @@ phases:
           --query "Parameter.Value" --output text --region $REGION)
         aws lakeformation grant-permissions \
           --principal "DataLakePrincipalIdentifier=${TRENDING_ROLE_ARN}" \
-          --resource "{\"DataLocation\":{\"CatalogId\":\"${ACCOUNT}\",\"ResourceArn\":\"arn:aws:s3:::${STAGE_BUCKET}/ott/searchevents/gold/\"}}" \
+          --resource "{\"DataLocation\":{\"CatalogId\":\"${ACCOUNT}\",\"ResourceArn\":\"arn:aws:s3:::${ANALYTICS_BUCKET}/ott/searchevents/gold/\"}}" \
           --permissions DATA_LOCATION_ACCESS \
           --region $REGION || true
         echo "DATA_LOCATION_ACCESS grant applied for $TRENDING_ROLE_ARN"

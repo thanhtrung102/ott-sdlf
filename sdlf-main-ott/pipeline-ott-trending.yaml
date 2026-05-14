@@ -36,12 +36,12 @@ Parameters:
     Default: /sdlf/storage/rKMSKey/prod
   pGoldDatabaseName:
     Type: String
-    Default: sdlf_ott_gold
+    Default: fpt_ott_searchevents_gold
     Description: Glue database for the gold keyword_trends table
   pGoldBucket:
     Type: AWS::SSM::Parameter::Value<String>
-    Default: /sdlf/storage/rStageBucket/prod
-    Description: S3 bucket that holds the gold layer (may differ from stage bucket)
+    Default: /sdlf/storage/rAnalyticsBucket/prod
+    Description: S3 bucket that holds the gold layer
   pAthenaResultsBucket:
     Type: String
     Description: Bucket enforced by the sdlf-ott Athena workgroup for query results
@@ -272,7 +272,7 @@ Resources:
 
           _GOLD_CTAS_SQL = """
           CREATE TABLE {gold_db}.keyword_trends
-          WITH (format='PARQUET', parquet_compression='SNAPPY', external_location='{gold_location}')
+          WITH (format='PARQUET', parquet_compression='SNAPPY', external_location='{gold_location}', partitioned_by=ARRAY['trend_date'])
           AS
           WITH agg AS (
               SELECT keyword_norm, platform_group, derived_genre, dt AS trend_date,
@@ -387,6 +387,8 @@ Resources:
                   sql = _TRENDING_SQL.format(db=DB, cur_start=cur_start, cur_end=cur_end, base_start=base_start, base_end=base_end, min_volume=MIN_VOLUME, min_growth=MIN_GROWTH, genre_filter=genre_filter)
               return athena_query(sql)
 
+          _SUBDIR = {"trending_all": "all", "trending_unknown": "unknown"}
+
           def lambda_handler(event, context):
               logger.info(f"Trending report triggered — source: {event.get('source','?')} detail-type: {event.get('detail-type','?')}")
               ref = event.get("reference_date")
@@ -396,14 +398,14 @@ Resources:
               base_start = str(today - timedelta(days=35))
               base_end   = str(today - timedelta(days=28))
               dt = str(today)
-              prefix = f"{ANALYTICS_PREFIX}{dt}/"
               use_fallback = not has_baseline_data(base_start, base_end)
               if use_fallback: logger.warning("No baseline data — using volume-only fallback")
               summary, errors = {}, 0
               for name, gf in [("trending_all", ""), ("trending_unknown", "AND c.derived_genre = 'UNKNOWN'" if not use_fallback else "AND derived_genre = 'UNKNOWN'")]:
                   try:
                       headers, rows = run_query(cur_start, cur_end, base_start, base_end, use_fallback, gf)
-                      summary[name] = write_csv(f"{prefix}{name}.csv", headers, rows)
+                      report_prefix = f"{ANALYTICS_PREFIX}{_SUBDIR[name]}/{dt}/"
+                      summary[name] = write_csv(f"{report_prefix}{name}.csv", headers, rows)
                   except Exception as e:
                       logger.error(f"{name} failed: {e}"); summary[name] = -1; errors += 1
               try:
@@ -416,10 +418,11 @@ Resources:
                   f"Trending keywords (all genres): {summary.get('trending_all',0)}\n"
                   f"Trending UNKNOWN (LUT targets): {summary.get('trending_unknown',0)}\n"
                   f"Gold table rows written: {summary.get('gold_rows',0)}\n"
-                  f"Reports: s3://{STAGE_BUCKET}/{prefix}\nErrors: {errors}"
+                  f"All:     s3://{STAGE_BUCKET}/{ANALYTICS_PREFIX}all/{dt}/\n"
+                  f"Unknown: s3://{STAGE_BUCKET}/{ANALYTICS_PREFIX}unknown/{dt}/\nErrors: {errors}"
               )
               sns.publish(TopicArn=SNS_TOPIC_ARN, Subject=f"OTT Trending Keywords Report {dt}", Message=message)
-              result = {"dt": dt, "mode": mode, "reports": summary, "prefix": f"s3://{STAGE_BUCKET}/{prefix}", "errors": errors}
+              result = {"dt": dt, "mode": mode, "reports": summary, "prefixes": {"all": f"s3://{STAGE_BUCKET}/{ANALYTICS_PREFIX}all/{dt}/", "unknown": f"s3://{STAGE_BUCKET}/{ANALYTICS_PREFIX}unknown/{dt}/"}, "errors": errors}
               events.put_events(Entries=[{"Source": "sdlf.ott.trending", "DetailType": "Trending Report Completed", "Detail": json.dumps(result)}])
               logger.info(f"Trending complete — all:{summary.get('trending_all',0)} unknown:{summary.get('trending_unknown',0)} gold:{summary.get('gold_rows',0)} errors:{errors}")
               return result
@@ -477,6 +480,14 @@ Resources:
 
   ######## GLUE CATALOG ########
 
+  rGoldDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Ref pGoldDatabaseName
+        Description: Gold layer — ranked keyword trends for the OTT search pipeline
+
   rTrendingAllTable:
     Type: AWS::Glue::Table
     Properties:
@@ -495,9 +506,9 @@ Resources:
           projection.dt.range: "2022-01-01,NOW+1YEARS"
           projection.dt.interval: "1"
           projection.dt.interval.unit: DAYS
-          storage.location.template: !Sub s3://${pStageBucket}/analytics/trending/${!dt}/
+          storage.location.template: !Sub s3://${pStageBucket}/analytics/trending/all/${!dt}/
         StorageDescriptor:
-          Location: !Sub s3://${pStageBucket}/analytics/trending/
+          Location: !Sub s3://${pStageBucket}/analytics/trending/all/
           InputFormat: org.apache.hadoop.mapred.TextInputFormat
           OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
           SerdeInfo:
@@ -540,9 +551,9 @@ Resources:
           projection.dt.range: "2022-01-01,NOW+1YEARS"
           projection.dt.interval: "1"
           projection.dt.interval.unit: DAYS
-          storage.location.template: !Sub s3://${pStageBucket}/analytics/trending/${!dt}/
+          storage.location.template: !Sub s3://${pStageBucket}/analytics/trending/unknown/${!dt}/
         StorageDescriptor:
-          Location: !Sub s3://${pStageBucket}/analytics/trending/
+          Location: !Sub s3://${pStageBucket}/analytics/trending/unknown/
           InputFormat: org.apache.hadoop.mapred.TextInputFormat
           OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
           SerdeInfo:

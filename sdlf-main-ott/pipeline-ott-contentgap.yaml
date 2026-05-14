@@ -431,6 +431,174 @@ Resources:
           - Name: dt
             Type: string
 
+  rPremiumVsFreeTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref pDatabaseName
+      TableInput:
+        Name: premium_vs_free
+        Description: Premium vs free demand share by genre — date-partitioned CSV from Content Gap Lambda
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: csv
+          skip.header.line.count: "1"
+          projection.enabled: "true"
+          projection.dt.type: date
+          projection.dt.format: yyyy-MM-dd
+          projection.dt.range: "2022-01-01,NOW+1YEARS"
+          projection.dt.interval: "1"
+          projection.dt.interval.unit: DAYS
+          storage.location.template: !Sub s3://${pStageBucket}/analytics/content-gap/${!dt}/
+        StorageDescriptor:
+          Location: !Sub s3://${pStageBucket}/analytics/content-gap/
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.serde2.OpenCSVSerde
+            Parameters:
+              separatorChar: ","
+              quoteChar: '"'
+          Columns:
+            - Name: derived_genre
+              Type: string
+            - Name: total_searches
+              Type: bigint
+            - Name: premium_searches
+              Type: bigint
+            - Name: free_searches
+              Type: bigint
+            - Name: premium_share_pct
+              Type: string
+        PartitionKeys:
+          - Name: dt
+            Type: string
+
+  rRepeatSearchRateTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref pDatabaseName
+      TableInput:
+        Name: repeat_search_rate
+        Description: Repeat search frustration rate by genre — date-partitioned CSV from Content Gap Lambda
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: csv
+          skip.header.line.count: "1"
+          projection.enabled: "true"
+          projection.dt.type: date
+          projection.dt.format: yyyy-MM-dd
+          projection.dt.range: "2022-01-01,NOW+1YEARS"
+          projection.dt.interval: "1"
+          projection.dt.interval.unit: DAYS
+          storage.location.template: !Sub s3://${pStageBucket}/analytics/content-gap/${!dt}/
+        StorageDescriptor:
+          Location: !Sub s3://${pStageBucket}/analytics/content-gap/
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.serde2.OpenCSVSerde
+            Parameters:
+              separatorChar: ","
+              quoteChar: '"'
+          Columns:
+            - Name: derived_genre
+              Type: string
+            - Name: total_searches
+              Type: bigint
+            - Name: repeat_searches
+              Type: bigint
+            - Name: repeat_pct
+              Type: string
+        PartitionKeys:
+          - Name: dt
+            Type: string
+
+  rHourOfDayHeatmapTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref pDatabaseName
+      TableInput:
+        Name: hour_of_day_heatmap
+        Description: Search volume by hour of day (Vietnam time) per genre — date-partitioned CSV from Content Gap Lambda
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: csv
+          skip.header.line.count: "1"
+          projection.enabled: "true"
+          projection.dt.type: date
+          projection.dt.format: yyyy-MM-dd
+          projection.dt.range: "2022-01-01,NOW+1YEARS"
+          projection.dt.interval: "1"
+          projection.dt.interval.unit: DAYS
+          storage.location.template: !Sub s3://${pStageBucket}/analytics/content-gap/${!dt}/
+        StorageDescriptor:
+          Location: !Sub s3://${pStageBucket}/analytics/content-gap/
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.serde2.OpenCSVSerde
+            Parameters:
+              separatorChar: ","
+              quoteChar: '"'
+          Columns:
+            - Name: hour_of_day_vn
+              Type: string
+            - Name: derived_genre
+              Type: string
+            - Name: searches
+              Type: bigint
+            - Name: pct_of_genre
+              Type: string
+        PartitionKeys:
+          - Name: dt
+            Type: string
+
+  rGuestVsAuthDemandTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref pDatabaseName
+      TableInput:
+        Name: guest_vs_auth_demand
+        Description: Guest vs authenticated demand by genre — date-partitioned CSV from Content Gap Lambda
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: csv
+          skip.header.line.count: "1"
+          projection.enabled: "true"
+          projection.dt.type: date
+          projection.dt.format: yyyy-MM-dd
+          projection.dt.range: "2022-01-01,NOW+1YEARS"
+          projection.dt.interval: "1"
+          projection.dt.interval.unit: DAYS
+          storage.location.template: !Sub s3://${pStageBucket}/analytics/content-gap/${!dt}/
+        StorageDescriptor:
+          Location: !Sub s3://${pStageBucket}/analytics/content-gap/
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.serde2.OpenCSVSerde
+            Parameters:
+              separatorChar: ","
+              quoteChar: '"'
+          Columns:
+            - Name: derived_genre
+              Type: string
+            - Name: total_searches
+              Type: bigint
+            - Name: auth_searches
+              Type: bigint
+            - Name: guest_searches
+              Type: bigint
+            - Name: guest_share_pct
+              Type: string
+        PartitionKeys:
+          - Name: dt
+            Type: string
+
 Outputs:
   oPipelineReference:
     Description: CodePipeline reference this stack has been deployed with
