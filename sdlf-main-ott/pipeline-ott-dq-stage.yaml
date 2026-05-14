@@ -302,7 +302,7 @@ Resources:
                   {
                     "Variable": "$.recommendation_status.Status",
                     "StringEquals": "FAILED",
-                    "Next": "DQFailed"
+                    "Next": "StartEvaluationRun"
                   }
                 ],
                 "Default": "WaitForRecommendation"
