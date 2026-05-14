@@ -32,8 +32,8 @@ Parameters:
     Default: 10
     Description: Minimum searches in current window to filter noise
   pDatalakeLibraryLayerArn:
-    Type: String
-    Default: arn:aws:lambda:ap-southeast-1:703668403514:layer:sdlf-DatalakeLibrary:8
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /SDLF/Lambda/LatestDatalakeLibraryLayer
     Description: ARN of the SDLF datalake library Lambda layer
   pKmsKeyArn:
     Type: AWS::SSM::Parameter::Value<String>
