@@ -87,7 +87,9 @@ Resources:
                   - kms:Encrypt
                   - kms:GenerateDataKey*
                   - kms:ReEncrypt*
-                Resource: !Ref pKmsKeyArn
+                Resource:
+                  - !Ref pKmsKeyArn
+                  - "{{resolve:ssm:/SDLF2/KMS/KeyArn}}"
 
   rGlueJob:
     Type: AWS::Glue::Job
