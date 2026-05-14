@@ -29,9 +29,9 @@ QUERIES = {
                      / CAST(COUNT(*) AS double), 1) AS abandon_rate_pct
         FROM {db}.curated
         WHERE derived_genre != 'UNKNOWN'
-          AND is_search_abandoned = true
         GROUP BY keyword_norm, derived_genre
-        ORDER BY abandoned DESC
+        HAVING SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END) >= 5
+        ORDER BY abandon_rate_pct DESC, abandoned DESC
         LIMIT 500
     """,
     "premium_vs_free": """

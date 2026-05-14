@@ -122,6 +122,12 @@ Resources:
           def err(code, msg):
               return {"statusCode": code, "body": json.dumps({"error": msg})}
 
+          _VALID_TRENDING_TYPES = {"all", "unknown"}
+          _VALID_CG_REPORTS = {
+              "content_gaps", "premium_vs_free", "repeat_search_rate",
+              "hour_of_day_heatmap", "guest_vs_auth_demand",
+          }
+
           def handler(event, context):
               path = event.get("rawPath", "")
               qs = event.get("queryStringParameters") or {}
@@ -133,19 +139,25 @@ Resources:
 
               try:
                   if path == "/trending":
-                      base = "analytics/trending/"
+                      trend_type = qs.get("type", "all")
+                      if trend_type not in _VALID_TRENDING_TYPES:
+                          return err(400, "type must be 'all' or 'unknown'")
+                      base = f"analytics/trending/{trend_type}/"
                       prefix = f"{base}{date}/" if date else latest_date_prefix(base)
                       if not prefix:
                           return err(404, "No trending data available yet")
-                      rows = read_csv(f"{prefix}trending_all.csv", limit)
+                      rows = read_csv(f"{prefix}trending_{trend_type}.csv", limit)
                       return ok(rows)
 
                   elif path == "/content-gaps":
+                      report = qs.get("report", "content_gaps")
+                      if report not in _VALID_CG_REPORTS:
+                          return err(400, f"report must be one of: {', '.join(sorted(_VALID_CG_REPORTS))}")
                       base = "analytics/content-gap/"
                       prefix = f"{base}{date}/" if date else latest_date_prefix(base)
                       if not prefix:
                           return err(404, "No content-gap data available yet")
-                      rows = read_csv(f"{prefix}content_gaps.csv", limit)
+                      rows = read_csv(f"{prefix}{report}.csv", limit)
                       return ok(rows)
 
                   else:

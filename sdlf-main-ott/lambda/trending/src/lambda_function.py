@@ -125,6 +125,24 @@ prev_agg AS (
     FROM {curated_db}.curated
     GROUP BY keyword_norm, platform_group, derived_genre, dt
     HAVING COUNT(*) >= {min_volume}
+),
+prev_best AS (
+    SELECT
+        r.trend_date                                                       AS for_date,
+        p.keyword_norm,
+        p.platform_group,
+        p.derived_genre,
+        p.rank_prev,
+        ROW_NUMBER() OVER (
+            PARTITION BY r.trend_date, p.keyword_norm, p.platform_group, p.derived_genre
+            ORDER BY ABS(date_diff('day', date(p.trend_date_7d), date(r.trend_date)) - 7)
+        )                                                                  AS rn
+    FROM ranked r
+    JOIN prev_agg p
+      ON r.keyword_norm   = p.keyword_norm
+     AND r.platform_group = p.platform_group
+     AND r.derived_genre  = p.derived_genre
+     AND date_diff('day', date(p.trend_date_7d), date(r.trend_date)) BETWEEN 5 AND 9
 )
 SELECT
     r.keyword_norm,
@@ -136,16 +154,18 @@ SELECT
     r.abandonment_rate,
     r.unique_users,
     r.rank_today,
-    COALESCE(p.rank_prev, -1)                                 AS rank_7d_ago,
-    CASE WHEN p.rank_prev IS NULL THEN true ELSE false END    AS is_new_entrant,
-    COALESCE(p.rank_prev - r.rank_today, 0)                   AS rank_delta,
+    p.rank_prev                                                            AS rank_7d_ago,
+    CASE WHEN p.rank_prev IS NULL THEN true ELSE false END                 AS is_new_entrant,
+    CASE WHEN p.rank_prev IS NULL THEN NULL
+         ELSE p.rank_prev - r.rank_today END                              AS rank_delta,
     r.trend_date
 FROM ranked r
-LEFT JOIN prev_agg p
-       ON r.keyword_norm   = p.keyword_norm
-      AND r.platform_group = p.platform_group
-      AND r.derived_genre  = p.derived_genre
-      AND date_diff('day', date(p.trend_date_7d), date(r.trend_date)) = 7
+LEFT JOIN prev_best p
+       ON p.for_date      = r.trend_date
+      AND p.keyword_norm   = r.keyword_norm
+      AND p.platform_group = r.platform_group
+      AND p.derived_genre  = r.derived_genre
+      AND p.rn             = 1
 """
 
 

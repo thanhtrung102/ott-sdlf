@@ -29,9 +29,9 @@ Enrichment steps (sequence is load-bearing):
   13. isp_segment        — upper(proxy_isp)
   14. has_premium        — VIP / HBO GO+ / K+ / MAX in userplansmap
   15. subscription_count
-  16. search_session_id  — SHA-256(user_id|30-min bucket), anon-safe
-  17. is_repeat_search   — LAG window over session
-  18. is_cross_partition_date
+  16. plan_names         — parsed ARRAY<STRING> of subscription plan names (e.g. ["VIP", "K+"])
+  17. search_session_id  — SHA-256(user_id|30-min bucket), anon-safe
+  18. is_repeat_search   — LAG window over session
 """
 import re as _re
 import sys
@@ -152,6 +152,16 @@ def subscription_count_udf(plans):
     return len(plans)
 
 
+@udf(ArrayType(StringType()))
+def plan_names_udf(plans):
+    if plans is None:
+        return None
+    return [
+        (entry.split(":")[0].strip() if ":" in str(entry) else str(entry).strip())
+        for entry in plans
+    ]
+
+
 # ── Main enrichment pipeline ──────────────────────────────────────────────────
 
 def run() -> None:
@@ -248,6 +258,7 @@ def run() -> None:
         df
         .withColumn("has_premium",        has_premium_udf(col("userplansmap")))
         .withColumn("subscription_count", subscription_count_udf(col("userplansmap")))
+        .withColumn("plan_names",          plan_names_udf(col("userplansmap")))
     )
 
     # ── Step 16: Session ID (30-min bucket) ──────────────────────────────────
@@ -281,20 +292,14 @@ def run() -> None:
         .otherwise(col("keyword_norm") == prev_keyword),
     )
 
-    # ── Step 18: Cross-partition date flag ────────────────────────────────────
-    # dt comes from either the Hive partition or the YYYYMMDD dir extracted above.
-    # Normalise to YYYY-MM-DD string for the flag.
+    # ── Step 18: Normalise dt to ISO yyyy-MM-dd ───────────────────────────────
+    # Raw dirs are bare YYYYMMDD; convert to yyyy-MM-dd for consistent partition key.
     df = df.withColumn(
         "dt_norm",
         when(
             F.length(col("dt")) == 8,
             F.concat(col("dt").substr(1, 4), lit("-"), col("dt").substr(5, 2), lit("-"), col("dt").substr(7, 2)),
         ).otherwise(col("dt")),
-    )
-
-    df = df.withColumn(
-        "is_cross_partition_date",
-        year(col("event_ts")) != col("dt_norm").substr(1, 4).cast(IntegerType()),
     )
 
     # ── Final column selection ────────────────────────────────────────────────
@@ -313,9 +318,9 @@ def run() -> None:
         col("isp_segment"),
         col("has_premium"),
         col("subscription_count"),
+        col("plan_names"),
         col("search_session_id"),
         col("is_repeat_search"),
-        col("is_cross_partition_date"),
         col("dt_norm").alias("dt"),
     )
 

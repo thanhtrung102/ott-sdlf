@@ -187,8 +187,10 @@ Resources:
                          ROUND(100.0 * SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END)
                                / CAST(COUNT(*) AS double), 1) AS abandon_rate_pct
                   FROM {db}.curated
-                  WHERE derived_genre != 'UNKNOWN' AND is_search_abandoned = true
-                  GROUP BY keyword_norm, derived_genre ORDER BY abandoned DESC LIMIT 500
+                  WHERE derived_genre != 'UNKNOWN'
+                  GROUP BY keyword_norm, derived_genre
+                  HAVING SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END) >= 5
+                  ORDER BY abandon_rate_pct DESC, abandoned DESC LIMIT 500
               """,
               "premium_vs_free": """
                   SELECT derived_genre, COUNT(*) AS total_searches,
@@ -412,10 +414,10 @@ Resources:
           InputFormat: org.apache.hadoop.mapred.TextInputFormat
           OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
           SerdeInfo:
-            SerializationLibrary: org.apache.hadoop.hive.serde2.OpenCSVSerde
+            SerializationLibrary: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
             Parameters:
-              separatorChar: ","
-              quoteChar: '"'
+              field.delim: ","
+              serialization.format: ","
           Columns:
             - Name: keyword_norm
               Type: string
@@ -455,10 +457,10 @@ Resources:
           InputFormat: org.apache.hadoop.mapred.TextInputFormat
           OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
           SerdeInfo:
-            SerializationLibrary: org.apache.hadoop.hive.serde2.OpenCSVSerde
+            SerializationLibrary: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
             Parameters:
-              separatorChar: ","
-              quoteChar: '"'
+              field.delim: ","
+              serialization.format: ","
           Columns:
             - Name: derived_genre
               Type: string
@@ -469,7 +471,7 @@ Resources:
             - Name: free_searches
               Type: bigint
             - Name: premium_share_pct
-              Type: string
+              Type: double
         PartitionKeys:
           - Name: dt
             Type: string
@@ -498,10 +500,10 @@ Resources:
           InputFormat: org.apache.hadoop.mapred.TextInputFormat
           OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
           SerdeInfo:
-            SerializationLibrary: org.apache.hadoop.hive.serde2.OpenCSVSerde
+            SerializationLibrary: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
             Parameters:
-              separatorChar: ","
-              quoteChar: '"'
+              field.delim: ","
+              serialization.format: ","
           Columns:
             - Name: derived_genre
               Type: string
@@ -510,7 +512,7 @@ Resources:
             - Name: repeat_searches
               Type: bigint
             - Name: repeat_pct
-              Type: string
+              Type: double
         PartitionKeys:
           - Name: dt
             Type: string
@@ -539,19 +541,19 @@ Resources:
           InputFormat: org.apache.hadoop.mapred.TextInputFormat
           OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
           SerdeInfo:
-            SerializationLibrary: org.apache.hadoop.hive.serde2.OpenCSVSerde
+            SerializationLibrary: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
             Parameters:
-              separatorChar: ","
-              quoteChar: '"'
+              field.delim: ","
+              serialization.format: ","
           Columns:
             - Name: hour_of_day_vn
-              Type: string
+              Type: int
             - Name: derived_genre
               Type: string
             - Name: searches
               Type: bigint
             - Name: pct_of_genre
-              Type: string
+              Type: double
         PartitionKeys:
           - Name: dt
             Type: string
@@ -580,10 +582,10 @@ Resources:
           InputFormat: org.apache.hadoop.mapred.TextInputFormat
           OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
           SerdeInfo:
-            SerializationLibrary: org.apache.hadoop.hive.serde2.OpenCSVSerde
+            SerializationLibrary: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
             Parameters:
-              separatorChar: ","
-              quoteChar: '"'
+              field.delim: ","
+              serialization.format: ","
           Columns:
             - Name: derived_genre
               Type: string
@@ -594,7 +596,7 @@ Resources:
             - Name: guest_searches
               Type: bigint
             - Name: guest_share_pct
-              Type: string
+              Type: double
         PartitionKeys:
           - Name: dt
             Type: string
