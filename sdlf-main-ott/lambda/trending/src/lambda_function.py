@@ -235,6 +235,18 @@ def run_trending_query(cur_start, cur_end, base_start, base_end, use_fallback, g
     return athena_query(sql)
 
 
+def _empty_s3_prefix(s3_url):
+    """Delete all objects under an s3://bucket/prefix/ URL before CTAS."""
+    parts = s3_url.replace("s3://", "").split("/", 1)
+    bucket, prefix = parts[0], parts[1] if len(parts) > 1 else ""
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        keys = [{"Key": o["Key"]} for o in page.get("Contents", [])]
+        if keys:
+            s3.delete_objects(Bucket=bucket, Delete={"Objects": keys})
+            logger.info(f"Deleted {len(keys)} objects from s3://{bucket}/{prefix}")
+
+
 def write_gold_table():
     gold_db       = os.environ.get("GOLD_DATABASE", "sdlf_ott_gold")
     gold_location = os.environ.get("GOLD_LOCATION", "")
@@ -244,6 +256,7 @@ def write_gold_table():
 
     logger.info(f"Writing gold table {gold_db}.keyword_trends -> {gold_location}")
     athena_ddl(_GOLD_DROP_SQL.format(gold_db=gold_db))
+    _empty_s3_prefix(gold_location)
     ctas = _GOLD_CTAS_SQL.format(
         gold_db=gold_db,
         gold_location=gold_location,

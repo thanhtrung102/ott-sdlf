@@ -360,6 +360,16 @@ Resources:
               _, rows = athena_query(sql)
               return rows and int(rows[0].get("cnt", 0)) > 0
 
+          def _empty_s3_prefix(s3_url):
+              parts = s3_url.replace("s3://", "").split("/", 1)
+              bucket, prefix = parts[0], parts[1] if len(parts) > 1 else ""
+              paginator = s3.get_paginator("list_objects_v2")
+              for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+                  keys = [{"Key": o["Key"]} for o in page.get("Contents", [])]
+                  if keys:
+                      s3.delete_objects(Bucket=bucket, Delete={"Objects": keys})
+                      logger.info(f"Deleted {len(keys)} objects from s3://{bucket}/{prefix}")
+
           def write_gold_table():
               gold_db = os.environ.get("GOLD_DATABASE", "sdlf_ott_gold")
               gold_location = os.environ.get("GOLD_LOCATION", "")
@@ -367,6 +377,7 @@ Resources:
                   logger.warning("GOLD_LOCATION not set — skipping gold table write")
                   return 0
               athena_ddl(_GOLD_DROP_SQL.format(gold_db=gold_db))
+              _empty_s3_prefix(gold_location)
               athena_ddl(_GOLD_CTAS_SQL.format(gold_db=gold_db, gold_location=gold_location, curated_db=DB, min_volume=MIN_VOLUME))
               _, count_rows = athena_query(f"SELECT COUNT(*) AS cnt FROM {gold_db}.keyword_trends")
               count = int(count_rows[0]["cnt"]) if count_rows else 0
