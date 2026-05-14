@@ -1,5 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: OTT Search Events — Glue enrichment job (standalone, no SDLF)
+Description: >
+  OTT Search Events — Glue enrichment job (standalone, no SDLF).
+  Source: glue/ott-search-glue-job.py
 
 Parameters:
   pTeamName:

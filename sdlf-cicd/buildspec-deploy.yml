@@ -68,7 +68,7 @@ phases:
           echo "$stack OK"
         }
 
-        deploy sdlf-ott-searchevents-glue-job scripts/ott-search-glue-job.yaml \
+        deploy sdlf-ott-searchevents-glue-job sdlf-main-ott/pipeline-ott-glue-job.yaml \
           pTeamName=ott \
           pDatasetName=searchevents \
           pArtifactsBucket=ott-search-${ACCOUNT}-prod \
