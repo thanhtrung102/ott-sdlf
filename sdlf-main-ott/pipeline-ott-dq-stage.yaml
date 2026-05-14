@@ -235,7 +235,6 @@ Resources:
 
   rDQStateMachine:
     Type: AWS::StepFunctions::StateMachine
-    DependsOn: rDQSmLogGroup
     Properties:
       StateMachineName: !Sub sdlf-ott-${pStageName}-sm
       RoleArn: !GetAtt rDQExecutionRole.Arn
