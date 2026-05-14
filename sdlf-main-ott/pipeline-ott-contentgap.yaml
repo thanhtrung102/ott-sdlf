@@ -22,10 +22,6 @@ Parameters:
   pSnsTopicArn:
     Type: AWS::SSM::Parameter::Value<String>
     Default: /SDLF/SNS/ott/Notifications
-  pDatalakeLibraryLayerArn:
-    Type: AWS::SSM::Parameter::Value<String>
-    Default: /SDLF/Lambda/LatestDatalakeLibraryLayer
-    Description: ARN of the SDLF datalake library Lambda layer
   pKmsKeyArn:
     Type: AWS::SSM::Parameter::Value<String>
     Default: /sdlf/storage/rKMSKey/prod
@@ -147,7 +143,7 @@ Resources:
       Timeout: 300
       MemorySize: 256
       Layers:
-        - !Ref pDatalakeLibraryLayerArn
+        - "{{resolve:ssm:/SDLF/Lambda/LatestDatalakeLibraryLayer}}"
       Environment:
         Variables:
           ATHENA_DATABASE: !Ref pDatabaseName

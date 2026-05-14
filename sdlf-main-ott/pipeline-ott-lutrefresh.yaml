@@ -29,10 +29,6 @@ Parameters:
     Type: Number
     Default: 20000
     Description: Max new UNKNOWN keywords to classify per Lambda invocation
-  pDatalakeLibraryLayerArn:
-    Type: AWS::SSM::Parameter::Value<String>
-    Default: /SDLF/Lambda/LatestDatalakeLibraryLayer
-    Description: ARN of the SDLF datalake library Lambda layer
   pKmsKeyArn:
     Type: AWS::SSM::Parameter::Value<String>
     Default: /sdlf/storage/rKMSKey/prod
@@ -158,7 +154,7 @@ Resources:
       Timeout: 900
       MemorySize: 512
       Layers:
-        - !Ref pDatalakeLibraryLayerArn
+        - "{{resolve:ssm:/SDLF/Lambda/LatestDatalakeLibraryLayer}}"
       Environment:
         Variables:
           ATHENA_DATABASE: !Ref pDatabaseName
