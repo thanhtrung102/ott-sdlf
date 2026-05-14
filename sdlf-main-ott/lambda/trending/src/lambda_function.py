@@ -204,6 +204,15 @@ def write_csv(key, headers, rows):
     return len(rows)
 
 
+def latest_dt():
+    """Return the most recent dt partition in the curated table."""
+    _, rows = athena_query(f"SELECT MAX(dt) AS max_dt FROM {DB}.curated")
+    val = rows[0].get("max_dt", "") if rows else ""
+    if not val:
+        raise RuntimeError("curated table has no data — cannot determine reference date")
+    return date.fromisoformat(val)
+
+
 def has_baseline_data(base_start, base_end):
     sql = _BASELINE_CHECK_SQL.format(db=DB, base_start=base_start, base_end=base_end)
     _, rows = athena_query(sql)
@@ -254,7 +263,7 @@ def lambda_handler(event, context):
         f"detail-type: {event.get('detail-type', '?')}"
     )
     ref = event.get("reference_date")
-    today = date.fromisoformat(ref) if ref else date.today()
+    today = date.fromisoformat(ref) if ref else latest_dt()
     cur_start  = str(today - timedelta(days=7))
     cur_end    = str(today)
     base_start = str(today - timedelta(days=35))
