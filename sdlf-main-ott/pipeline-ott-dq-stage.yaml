@@ -459,26 +459,35 @@ Resources:
           OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
           SerdeInfo:
             SerializationLibrary: org.apache.hive.hcatalog.data.JsonSerDe
+            Parameters:
+              mapping.catalog_id: catalogId
+              mapping.database_name: databaseName
+              mapping.table_name: tableName
+              mapping.dq_run_id: dqRunId
+              mapping.evaluation_started_on: evaluationStartedOn
+              mapping.evaluation_completed_on: evaluationCompletedOn
+              mapping.failure_reason: failureReason
+              mapping.evaluated_metrics: evaluatedMetrics
           Columns:
-            - Name: catalogid
+            - Name: catalog_id
               Type: string
-            - Name: databasename
+            - Name: database_name
               Type: string
-            - Name: tablename
+            - Name: table_name
               Type: string
-            - Name: dqrunid
+            - Name: dq_run_id
               Type: string
-            - Name: evaluationstartedon
+            - Name: evaluation_started_on
               Type: string
-            - Name: evaluationcompletedon
+            - Name: evaluation_completed_on
               Type: string
             - Name: rule
               Type: string
             - Name: outcome
               Type: string
-            - Name: failurereason
+            - Name: failure_reason
               Type: string
-            - Name: evaluatedmetrics
+            - Name: evaluated_metrics
               Type: string
         PartitionKeys:
           - Name: year
