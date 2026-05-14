@@ -131,7 +131,8 @@ phases:
 
         deploy sdlf-pipeline-ott-monitoring sdlf-main-ott/pipeline-ott-monitoring.yaml
 
-        deploy sdlf-pipeline-ott-lakeformation sdlf-main-ott/pipeline-ott-lakeformation.yaml
+        deploy sdlf-pipeline-ott-lakeformation sdlf-main-ott/pipeline-ott-lakeformation.yaml \
+          pStageBucket=${STAGE_BUCKET}
 
         deploy sdlf-pipeline-ott-api sdlf-main-ott/pipeline-ott-api.yaml
 

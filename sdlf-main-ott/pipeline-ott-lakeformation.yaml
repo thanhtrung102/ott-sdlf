@@ -37,6 +37,9 @@ Parameters:
   pDQGlueRoleArn:
     Type: AWS::SSM::Parameter::Value<String>
     Default: /sdlf/pipeline/rRole/ott-mainDQGlue
+  pStageBucket:
+    Type: String
+    Description: Stage S3 bucket name — used to scope gold data location grant
 
 Resources:
 
@@ -160,6 +163,21 @@ Resources:
         - SELECT
         - INSERT
         - ALTER
+      PermissionsWithGrantOption: []
+
+  # Trending Lambda — needs DATA_LOCATION_ACCESS on the gold S3 path so
+  # Athena CTAS with external_location can write to the LF-registered stage bucket.
+  rLFTrendingGoldLocation:
+    Type: AWS::LakeFormation::PrincipalPermissions
+    Properties:
+      Principal:
+        DataLakePrincipalIdentifier: !Ref pTrendingRoleArn
+      Resource:
+        DataLocation:
+          CatalogId: !Ref AWS::AccountId
+          ResourceArn: !Sub arn:${AWS::Partition}:s3:::${pStageBucket}/ott/searchevents/gold/
+      Permissions:
+        - DATA_LOCATION_ACCESS
       PermissionsWithGrantOption: []
 
 Outputs:
