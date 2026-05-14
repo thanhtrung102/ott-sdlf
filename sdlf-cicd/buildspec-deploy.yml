@@ -23,9 +23,10 @@ phases:
       - CURATED_CRAWLER=$(aws ssm get-parameter --name "/sdlf/dataset/rAnalyticsGlueCrawler/searchevents" --query "Parameter.Value" --output text --region $REGION)
       - CRAWLER_ROLE=$(aws ssm get-parameter --name "/sdlf/dataset/rDatalakeCrawlerRole/searchevents" --query "Parameter.Value" --output text --region $REGION)
       - STAGE_B_SM_ARN=$(aws ssm get-parameter --name "/sdlf/pipeline/rStateMachine/ott-mainB" --query "Parameter.Value" --output text --region $REGION)
-      - ATHENA_WG_OUTPUT=$(aws athena get-work-group --work-group sdlf-ott --region $REGION --query "WorkGroup.Configuration.ResultConfiguration.OutputLocation" --output text)
-      - ATHENA_RESULTS_BUCKET=$(echo $ATHENA_WG_OUTPUT | sed 's|s3://||' | cut -d'/' -f1)
-      - echo "Account $ACCOUNT  KMS $KMS_KEY  AthenaResultsBucket $ATHENA_RESULTS_BUCKET"
+      - ATHENA_WG_CFG=$(aws athena get-work-group --work-group sdlf-ott --region $REGION --query "WorkGroup.Configuration.ResultConfiguration" --output json)
+      - ATHENA_RESULTS_BUCKET=$(echo $ATHENA_WG_CFG | python3 -c "import json,sys; c=json.load(sys.stdin); print(c['OutputLocation'].split('/')[2])")
+      - ATHENA_WG_KMS=$(echo $ATHENA_WG_CFG | python3 -c "import json,sys; c=json.load(sys.stdin); print(c.get('EncryptionConfiguration',{}).get('KmsKey',''))")
+      - echo "Account $ACCOUNT  KMS $KMS_KEY  AthenaResultsBucket $ATHENA_RESULTS_BUCKET  AthenaWgKms $ATHENA_WG_KMS"
       - |
         # One-time migration: delete gold quality stack if it is on the old separate template.
         # Detection: old template has no pStageName parameter; new unified template always has it.
@@ -100,13 +101,16 @@ phases:
         deploy sdlf-pipeline-ott-lutrefresh sdlf-main-ott/pipeline-ott-lutrefresh.yaml \
           pMaxNewKeywords=${MAX_NEW_KEYWORDS} \
           pBedrockModelId=${BEDROCK_MODEL_ID} \
-          pAthenaResultsBucket=${ATHENA_RESULTS_BUCKET}
+          pAthenaResultsBucket=${ATHENA_RESULTS_BUCKET} \
+          pAthenaWorkgroupKmsKey=${ATHENA_WG_KMS}
 
         deploy sdlf-pipeline-ott-contentgap sdlf-main-ott/pipeline-ott-contentgap.yaml \
-          pAthenaResultsBucket=${ATHENA_RESULTS_BUCKET}
+          pAthenaResultsBucket=${ATHENA_RESULTS_BUCKET} \
+          pAthenaWorkgroupKmsKey=${ATHENA_WG_KMS}
 
         deploy sdlf-pipeline-ott-trending sdlf-main-ott/pipeline-ott-trending.yaml \
-          pAthenaResultsBucket=${ATHENA_RESULTS_BUCKET}
+          pAthenaResultsBucket=${ATHENA_RESULTS_BUCKET} \
+          pAthenaWorkgroupKmsKey=${ATHENA_WG_KMS}
 
         deploy sdlf-pipeline-ott-goldquality sdlf-main-ott/pipeline-ott-dq-stage.yaml \
           pStageName=mainGoldDQ \

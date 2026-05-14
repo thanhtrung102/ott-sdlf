@@ -49,6 +49,9 @@ Parameters:
   pAthenaResultsBucket:
     Type: String
     Description: Bucket enforced by the sdlf-ott Athena workgroup for query results
+  pAthenaWorkgroupKmsKey:
+    Type: String
+    Description: KMS key ARN used by the sdlf-ott Athena workgroup for SSE_KMS output encryption
 
 Resources:
 
@@ -144,6 +147,7 @@ Resources:
                   - kms:GenerateDataKey
                 Resource:
                   - !Ref pKmsKeyArn
+                  - !Ref pAthenaWorkgroupKmsKey
               - Effect: Allow
                 Action:
                   - sns:Publish
