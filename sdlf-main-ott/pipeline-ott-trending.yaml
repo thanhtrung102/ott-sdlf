@@ -339,6 +339,13 @@ Resources:
               logger.info(f"Wrote {len(rows)} rows -> s3://{STAGE_BUCKET}/{key}")
               return len(rows)
 
+          def latest_dt():
+              _, rows = athena_query(f"SELECT MAX(dt) AS max_dt FROM {DB}.curated")
+              val = rows[0].get("max_dt", "") if rows else ""
+              if not val:
+                  raise RuntimeError("curated table has no data")
+              return date.fromisoformat(val)
+
           def has_baseline_data(base_start, base_end):
               sql = f"SELECT COUNT(*) AS cnt FROM {DB}.curated WHERE dt >= '{base_start}' AND dt < '{base_end}'"
               _, rows = athena_query(sql)
@@ -367,7 +374,7 @@ Resources:
           def lambda_handler(event, context):
               logger.info(f"Trending report triggered — source: {event.get('source','?')} detail-type: {event.get('detail-type','?')}")
               ref = event.get("reference_date")
-              today = date.fromisoformat(ref) if ref else date.today()
+              today = date.fromisoformat(ref) if ref else latest_dt()
               cur_start  = str(today - timedelta(days=7))
               cur_end    = str(today)
               base_start = str(today - timedelta(days=35))
