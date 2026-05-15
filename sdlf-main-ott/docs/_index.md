@@ -3,6 +3,7 @@ title: "OTT Search Analytics Pipeline"
 date: 2026-05-15
 weight: 1
 chapter: true
+description: "OTT Search Analytics Pipeline — AWS SDLF"
 ---
 
 # OTT Search Analytics Pipeline

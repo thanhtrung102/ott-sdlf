@@ -1,0 +1,28 @@
+baseURL = "https://thanhtrung102.github.io/ott-sdlf/"
+relativeURLs = true
+canonifyURLs = true
+
+theme = "hugo-theme-relearn"
+contentDir = "docs"
+
+[outputs]
+home = ["HTML", "RSS", "JSON"]
+
+[params]
+  themeVariant = "relearn-light"
+  editURL = ""
+  author = ""
+  showVisitedLinks = true
+  disableBreadcrumb = false
+  disableNextPrev = false
+
+[Languages]
+[Languages.en]
+title = "OTT Search Analytics Pipeline"
+weight = 1
+label = "English"
+
+[markup]
+  [markup.goldmark]
+    [markup.goldmark.renderer]
+      unsafe = true
