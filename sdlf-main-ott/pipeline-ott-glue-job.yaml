@@ -35,6 +35,10 @@ Parameters:
   pPipelineDeploymentInstance:
     Type: String
     Default: mainB
+  pGlueDatabaseName:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/dataset/rAnalyticsGlueDataCatalog/searchevents
+    Description: Glue database that holds curated and raw catalog tables
 
 Resources:
   rGlueRole:
@@ -120,6 +124,53 @@ Resources:
         Team: !Ref pTeamName
         Dataset: !Ref pDatasetName
         Project: fpt-play-search-analytics
+
+  rRawSearchEventsTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref pGlueDatabaseName
+      TableInput:
+        Name: raw_search_events
+        Description: Raw OTT search event Parquet files — schema contract for upstream change detection
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: parquet
+          projection.enabled: "true"
+          projection.dt.type: date
+          projection.dt.format: yyyyMMdd
+          projection.dt.range: "20220101,NOW+1YEARS"
+          projection.dt.interval: "1"
+          projection.dt.interval.unit: DAYS
+          storage.location.template: !Sub s3://${pRawBucket}/${pTeamName}/${pDatasetName}/${!dt}/
+        StorageDescriptor:
+          Location: !Sub s3://${pRawBucket}/${pTeamName}/${pDatasetName}/
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
+          Columns:
+            - Name: eventid
+              Type: string
+            - Name: datetime
+              Type: string
+            - Name: keyword
+              Type: string
+            - Name: category
+              Type: string
+            - Name: platform
+              Type: string
+            - Name: networktype
+              Type: string
+            - Name: userplansmap
+              Type: array<string>
+            - Name: proxy_isp
+              Type: string
+            - Name: user_id
+              Type: string
+        PartitionKeys:
+          - Name: dt
+            Type: string
 
 Outputs:
   oGlueJobName:

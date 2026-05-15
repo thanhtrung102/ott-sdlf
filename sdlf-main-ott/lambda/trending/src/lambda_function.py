@@ -43,7 +43,7 @@ SELECT c.keyword_norm,
        CASE WHEN COALESCE(b.baseline_cnt, 0) = 0 THEN NULL
             ELSE ROUND(CAST(c.current_cnt AS double) / b.baseline_cnt, 2)
        END                                                                        AS growth_multiplier,
-       CASE WHEN b.baseline_cnt IS NULL THEN 'true' ELSE 'false' END             AS is_new_keyword
+       CASE WHEN b.baseline_cnt IS NULL THEN true ELSE false END                 AS is_new_keyword
 FROM current_window c
 LEFT JOIN baseline_window b
        ON c.keyword_norm = b.keyword_norm AND c.derived_genre = b.derived_genre
@@ -57,7 +57,7 @@ LIMIT 1000
 
 _FALLBACK_SQL = """
 SELECT keyword_norm, derived_genre, COUNT(*) AS current_cnt,
-       0 AS baseline_cnt, NULL AS growth_multiplier, 'true' AS is_new_keyword
+       0 AS baseline_cnt, NULL AS growth_multiplier, true AS is_new_keyword
 FROM {db}.curated
 WHERE dt >= '{cur_start}' AND dt < '{cur_end}'
 {genre_filter}
@@ -73,12 +73,10 @@ WHERE dt >= '{base_start}' AND dt < '{base_end}'
 """
 
 # Gold-layer CTAS: per-keyword x platform x genre x date rankings.
-# Drops and recreates the external table each run so the gold layer
-# reflects the most recent full-history aggregation.
-_GOLD_DROP_SQL = "DROP TABLE IF EXISTS {gold_db}.keyword_trends"
-
+# Written to staging first; swapped to production only after row count validates.
+# Prevents an empty/partial gold table if the CTAS fails mid-write.
 _GOLD_CTAS_SQL = """
-CREATE TABLE {gold_db}.keyword_trends
+CREATE TABLE {table_name}
 WITH (
     format              = 'PARQUET',
     parquet_compression = 'SNAPPY',
@@ -98,7 +96,7 @@ WITH agg AS (
         CAST(SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END)
                                                                 AS bigint) AS abandoned_count,
         ROUND(CAST(SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END) AS double)
-              / CAST(COUNT(*) AS double), 4)                              AS abandonment_rate,
+              / CAST(COUNT(*) AS double) * 100, 2)                        AS abandon_rate_pct,
         CAST(COUNT(DISTINCT user_id_hashed)                     AS bigint) AS unique_users
     FROM {curated_db}.curated
     GROUP BY keyword_norm, platform_group, derived_genre, dt
@@ -151,7 +149,7 @@ SELECT
     r.search_count,
     r.enter_count,
     r.abandoned_count,
-    r.abandonment_rate,
+    r.abandon_rate_pct,
     r.unique_users,
     r.rank_today,
     p.rank_prev                                                            AS rank_7d_ago,
@@ -257,7 +255,6 @@ def run_trending_query(cur_start, cur_end, base_start, base_end, use_fallback, g
 
 
 def _empty_s3_prefix(s3_url):
-    """Delete all objects under an s3://bucket/prefix/ URL before CTAS."""
     parts = s3_url.replace("s3://", "").split("/", 1)
     bucket, prefix = parts[0], parts[1] if len(parts) > 1 else ""
     paginator = s3.get_paginator("list_objects_v2")
@@ -265,28 +262,64 @@ def _empty_s3_prefix(s3_url):
         keys = [{"Key": o["Key"]} for o in page.get("Contents", [])]
         if keys:
             s3.delete_objects(Bucket=bucket, Delete={"Objects": keys})
-            logger.info(f"Deleted {len(keys)} objects from s3://{bucket}/{prefix}")
+
+
+def _copy_s3_prefix(src_url, dst_url):
+    src_bucket, src_prefix = src_url.replace("s3://", "").split("/", 1)
+    dst_bucket, dst_prefix = dst_url.replace("s3://", "").split("/", 1)
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=src_bucket, Prefix=src_prefix):
+        for obj in page.get("Contents", []):
+            src_key = obj["Key"]
+            dst_key = dst_prefix + src_key[len(src_prefix):]
+            s3.copy_object(
+                CopySource={"Bucket": src_bucket, "Key": src_key},
+                Bucket=dst_bucket,
+                Key=dst_key,
+            )
+
+
+def _ctas(table_name, location):
+    athena_ddl(_GOLD_CTAS_SQL.format(
+        table_name=table_name,
+        gold_location=location,
+        curated_db=DB,
+        min_volume=MIN_VOLUME,
+    ))
 
 
 def write_gold_table():
-    gold_db       = os.environ.get("GOLD_DATABASE", "sdlf_ott_gold")
-    gold_location = os.environ.get("GOLD_LOCATION", "")
+    gold_db          = os.environ.get("GOLD_DATABASE", "sdlf_ott_gold")
+    gold_location    = os.environ.get("GOLD_LOCATION", "")
     if not gold_location:
         logger.warning("GOLD_LOCATION not set — skipping gold table write")
         return 0
 
-    logger.info(f"Writing gold table {gold_db}.keyword_trends -> {gold_location}")
-    athena_ddl(_GOLD_DROP_SQL.format(gold_db=gold_db))
+    prod_table       = f"{gold_db}.keyword_trends"
+    staging_table    = f"{gold_db}.keyword_trends_staging"
+    staging_location = gold_location.rstrip("/") + "_staging/"
+
+    # Phase 1: CTAS to staging — production table untouched until validated.
+    athena_ddl(f"DROP TABLE IF EXISTS {staging_table}")
+    _empty_s3_prefix(staging_location)
+    _ctas(staging_table, staging_location)
+    _, cnt_rows = athena_query(f"SELECT COUNT(*) AS cnt FROM {staging_table}")
+    count = int(cnt_rows[0]["cnt"]) if cnt_rows else 0
+    if count == 0:
+        athena_ddl(f"DROP TABLE IF EXISTS {staging_table}")
+        _empty_s3_prefix(staging_location)
+        raise RuntimeError("Staging CTAS produced 0 rows — gold table unchanged")
+
+    # Phase 2: Swap staging → production.
+    athena_ddl(f"DROP TABLE IF EXISTS {prod_table}")
     _empty_s3_prefix(gold_location)
-    ctas = _GOLD_CTAS_SQL.format(
-        gold_db=gold_db,
-        gold_location=gold_location,
-        curated_db=DB,
-        min_volume=MIN_VOLUME,
-    )
-    athena_ddl(ctas)
-    _, count_rows = athena_query(f"SELECT COUNT(*) AS cnt FROM {gold_db}.keyword_trends")
-    count = int(count_rows[0]["cnt"]) if count_rows else 0
+    _copy_s3_prefix(staging_location, gold_location)
+    _ctas(prod_table, gold_location)
+
+    # Phase 3: Cleanup staging.
+    athena_ddl(f"DROP TABLE IF EXISTS {staging_table}")
+    _empty_s3_prefix(staging_location)
+
     logger.info(f"Gold table written: {count} rows")
     return count
 

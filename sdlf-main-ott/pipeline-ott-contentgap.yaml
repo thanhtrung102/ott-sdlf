@@ -431,7 +431,7 @@ Resources:
               Type: double
         PartitionKeys:
           - Name: dt
-            Type: string
+            Type: date
 
   rPremiumVsFreeTable:
     Type: AWS::Glue::Table
@@ -474,7 +474,7 @@ Resources:
               Type: double
         PartitionKeys:
           - Name: dt
-            Type: string
+            Type: date
 
   rRepeatSearchRateTable:
     Type: AWS::Glue::Table
@@ -515,7 +515,7 @@ Resources:
               Type: double
         PartitionKeys:
           - Name: dt
-            Type: string
+            Type: date
 
   rHourOfDayHeatmapTable:
     Type: AWS::Glue::Table
@@ -556,7 +556,7 @@ Resources:
               Type: double
         PartitionKeys:
           - Name: dt
-            Type: string
+            Type: date
 
   rGuestVsAuthDemandTable:
     Type: AWS::Glue::Table
@@ -599,7 +599,7 @@ Resources:
               Type: double
         PartitionKeys:
           - Name: dt
-            Type: string
+            Type: date
 
 Outputs:
   oPipelineReference:

@@ -2,8 +2,8 @@
 ott-search-glue-job — SDLF Stage B enrichment.
 
 Glue 4.0 (Spark 3.3 / Python 3.10), G.1X, 10 workers.
-Reads raw OTT search Parquet from the SDLF raw bucket and writes an
-18-column curated layer partitioned by dt + derived_genre.
+Reads raw OTT search Parquet from the SDLF raw bucket and writes a
+19-column curated layer partitioned by dt + derived_genre.
 
 SDLF passes SOURCE_LOCATION and OUTPUT_LOCATION as job arguments.
 Optional PUSH_DOWN_PREDICATE limits which dt partitions are processed;
@@ -32,6 +32,7 @@ Enrichment steps (sequence is load-bearing):
   16. plan_names         — parsed ARRAY<STRING> of subscription plan names (e.g. ["VIP", "K+"])
   17. search_session_id  — SHA-256(user_id|30-min bucket), anon-safe
   18. is_repeat_search   — LAG window over session
+  19. _pipeline_run_id   — Glue JOB_RUN_ID for lineage
 """
 import re as _re
 import sys
@@ -57,6 +58,11 @@ args = getResolvedOptions(
     sys.argv,
     ["JOB_NAME", "SOURCE_LOCATION", "OUTPUT_LOCATION"],
 )
+
+try:
+    _PIPELINE_RUN_ID = getResolvedOptions(sys.argv, ["JOB_RUN_ID"])["JOB_RUN_ID"]
+except Exception:
+    _PIPELINE_RUN_ID = "unknown"
 
 # Optional: push-down predicate to limit dt partitions.
 # Pass "all" or omit entirely for a full historical backfill.
@@ -209,6 +215,9 @@ def run() -> None:
     # ── Step 3: Drop corrupt year 0004 ───────────────────────────────────────
     df = df.filter(year(col("event_ts")) >= 2015)
 
+    # Deduplicate on event_id — guards against double-writes from Glue job retries.
+    df = df.dropDuplicates(["event_id"])
+
     # ── Step 4: Vietnam timezone hour ────────────────────────────────────────
     df = df.withColumn(
         "hour_of_day_vn",
@@ -292,7 +301,10 @@ def run() -> None:
         .otherwise(col("keyword_norm") == prev_keyword),
     )
 
-    # ── Step 18: Normalise dt to ISO yyyy-MM-dd ───────────────────────────────
+    # ── Step 18: Pipeline lineage column ─────────────────────────────────────
+    df = df.withColumn("_pipeline_run_id", lit(_PIPELINE_RUN_ID))
+
+    # ── Step 19: Normalise dt to ISO yyyy-MM-dd ───────────────────────────────
     # Raw dirs are bare YYYYMMDD; convert to yyyy-MM-dd for consistent partition key.
     df = df.withColumn(
         "dt_norm",
@@ -321,6 +333,7 @@ def run() -> None:
         col("plan_names"),
         col("search_session_id"),
         col("is_repeat_search"),
+        col("_pipeline_run_id"),
         col("dt_norm").alias("dt"),
     )
 

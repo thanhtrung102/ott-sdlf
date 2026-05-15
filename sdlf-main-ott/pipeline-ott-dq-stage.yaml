@@ -250,8 +250,16 @@ Resources:
         - |
           {
             "Comment": "OTT ${pStageName} Data Quality on ${pDatabaseName}.${pTableName}",
-            "StartAt": "StartRecommendationRun",
+            "StartAt": "FormatRunDate",
             "States": {
+              "FormatRunDate": {
+                "Type": "Pass",
+                "Parameters": {
+                  "run_date.$": "States.ArrayGetItem(States.StringSplit($$.Execution.StartTime, 'T'), 0)"
+                },
+                "ResultPath": "$.date_info",
+                "Next": "StartRecommendationRun"
+              },
               "StartRecommendationRun": {
                 "Type": "Task",
                 "Resource": "arn:aws:states:::aws-sdk:glue:startDataQualityRuleRecommendationRun",
@@ -322,7 +330,7 @@ Resources:
                   "RulesetNames": ["${pRulesetName}"],
                   "AdditionalRunOptions": {
                     "CloudWatchMetricsEnabled": true,
-                    "ResultsS3Prefix": "s3://${pStageBucket}/${pResultsS3Prefix}/"
+                    "ResultsS3Prefix.$": "States.Format('s3://${pStageBucket}/${pResultsS3Prefix}/{}/', $.date_info.run_date)"
                   }
                 },
                 "ResultPath": "$.evaluation_run",
@@ -441,13 +449,17 @@ Resources:
       DatabaseName: !Ref pDatabaseName
       TableInput:
         Name: dq_results
-        Description: !Sub Glue DQ evaluation results for ${pDatabaseName}.${pTableName} — one JSON file per run in flat UUID subfolders
+        Description: !Sub Glue DQ evaluation results for ${pDatabaseName}.${pTableName} — UUID subfolders under daily run_date partitions
         TableType: EXTERNAL_TABLE
         Parameters:
           classification: json
-          # Glue DQ writes s3://{bucket}/{prefix}/{run-uuid}/*.json — no date hierarchy.
-          # recurse=true lets Athena scan all UUID subfolders without partition projection.
-          recurse: "true"
+          projection.enabled: "true"
+          projection.run_date.type: date
+          projection.run_date.format: yyyy-MM-dd
+          projection.run_date.range: "2022-01-01,NOW+1YEARS"
+          projection.run_date.interval: "1"
+          projection.run_date.interval.unit: DAYS
+          storage.location.template: !Sub s3://${pStageBucket}/${pResultsS3Prefix}/${!run_date}/
         StorageDescriptor:
           Location: !Sub s3://${pStageBucket}/${pResultsS3Prefix}/
           InputFormat: org.apache.hadoop.mapred.TextInputFormat
@@ -484,6 +496,9 @@ Resources:
               Type: string
             - Name: evaluated_metrics
               Type: string
+        PartitionKeys:
+          - Name: run_date
+            Type: date
 
 Outputs:
   oPipelineReference:
