@@ -2,7 +2,7 @@ import csv
 import io
 import os
 import time
-from datetime import datetime, timezone
+from datetime import date, timedelta, timezone
 
 import boto3
 from datalake_library.commons import init_logger
@@ -28,7 +28,7 @@ QUERIES = {
                ROUND(100.0 * SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END)
                      / CAST(COUNT(*) AS double), 1) AS abandon_rate_pct
         FROM {db}.curated
-        WHERE derived_genre != 'UNKNOWN'
+        WHERE dt >= '{start_dt}' AND derived_genre != 'UNKNOWN'
         GROUP BY keyword_norm, derived_genre
         HAVING SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END) >= 5
         ORDER BY abandon_rate_pct DESC, abandoned DESC
@@ -42,6 +42,7 @@ QUERIES = {
                ROUND(100.0 * SUM(CASE WHEN has_premium THEN 1 ELSE 0 END)
                      / CAST(COUNT(*) AS double), 1) AS premium_share_pct
         FROM {db}.curated
+        WHERE dt >= '{start_dt}'
         GROUP BY derived_genre
         ORDER BY premium_share_pct DESC
     """,
@@ -52,6 +53,7 @@ QUERIES = {
                ROUND(100.0 * SUM(CASE WHEN is_repeat_search THEN 1 ELSE 0 END)
                      / CAST(COUNT(*) AS double), 1) AS repeat_pct
         FROM {db}.curated
+        WHERE dt >= '{start_dt}'
         GROUP BY derived_genre
         ORDER BY repeat_pct DESC
     """,
@@ -61,7 +63,7 @@ QUERIES = {
                COUNT(*) AS searches,
                ROUND(100.0 * COUNT(*) / CAST(SUM(COUNT(*)) OVER (PARTITION BY derived_genre) AS double), 1) AS pct_of_genre
         FROM {db}.curated
-        WHERE derived_genre != 'UNKNOWN'
+        WHERE dt >= '{start_dt}' AND derived_genre != 'UNKNOWN'
         GROUP BY hour_of_day_vn, derived_genre
         ORDER BY derived_genre, hour_of_day_vn
     """,
@@ -73,7 +75,7 @@ QUERIES = {
                ROUND(100.0 * SUM(CASE WHEN NOT user_is_authenticated THEN 1 ELSE 0 END)
                      / CAST(COUNT(*) AS double), 1) AS guest_share_pct
         FROM {db}.curated
-        WHERE derived_genre != 'UNKNOWN'
+        WHERE dt >= '{start_dt}' AND derived_genre != 'UNKNOWN'
         GROUP BY derived_genre
         ORDER BY guest_share_pct DESC
     """,
@@ -94,6 +96,14 @@ QUERY_DESCRIPTIONS = {
     "hour_of_day_heatmap": "Use pct_of_genre to find peak hours per genre for push notification scheduling.",
     "guest_vs_auth_demand": "High guest_share_pct genres are strongest login-gate conversion opportunities.",
 }
+
+
+def latest_dt():
+    _, rows = athena_query(f"SELECT MAX(dt) AS max_dt FROM {DB}.curated")
+    val = rows[0].get("max_dt", "") if rows else ""
+    if not val:
+        raise RuntimeError("curated table has no data — cannot determine reference date")
+    return date.fromisoformat(val)
 
 
 def athena_query(sql):
@@ -219,7 +229,9 @@ def lambda_handler(event, context):
         f"Content gap report triggered — source: {event.get('source', '?')} "
         f"detail-type: {event.get('detail-type', '?')}"
     )
-    dt = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    ref_date = latest_dt()
+    dt = str(ref_date)
+    start_dt = str(ref_date - timedelta(days=90))
     prefix = f"{ANALYTICS_PREFIX}{dt}/"
     summary = {}
     errors = 0
@@ -227,7 +239,7 @@ def lambda_handler(event, context):
 
     for name, sql_tpl in QUERIES.items():
         try:
-            headers, rows = athena_query(sql_tpl.format(db=DB))
+            headers, rows = athena_query(sql_tpl.format(db=DB, start_dt=start_dt))
             count = write_csv(f"{prefix}{name}.csv", headers, rows)
             summary[name] = count
             results[name] = (headers, rows, count)

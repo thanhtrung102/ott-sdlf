@@ -115,14 +115,12 @@ prev_agg AS (
         keyword_norm,
         platform_group,
         derived_genre,
-        dt                                                                 AS trend_date_7d,
+        trend_date                                                         AS trend_date_7d,
         CAST(RANK() OVER (
-            PARTITION BY platform_group, derived_genre, dt
-            ORDER BY COUNT(*) DESC
+            PARTITION BY platform_group, derived_genre, trend_date
+            ORDER BY search_count DESC
         ) AS integer) AS rank_prev
-    FROM {curated_db}.curated
-    GROUP BY keyword_norm, platform_group, derived_genre, dt
-    HAVING COUNT(*) >= {min_volume}
+    FROM agg
 ),
 prev_best AS (
     SELECT
@@ -155,7 +153,7 @@ SELECT
     p.rank_prev                                                            AS rank_7d_ago,
     CASE WHEN p.rank_prev IS NULL THEN true ELSE false END                 AS is_new_entrant,
     CASE WHEN p.rank_prev IS NULL THEN NULL
-         ELSE p.rank_prev - r.rank_today END                              AS rank_delta,
+         ELSE p.rank_prev - r.rank_today END                              AS rank_improvement,
     r.trend_date
 FROM ranked r
 LEFT JOIN prev_best p
@@ -310,11 +308,11 @@ def write_gold_table():
         _empty_s3_prefix(staging_location)
         raise RuntimeError("Staging CTAS produced 0 rows — gold table unchanged")
 
-    # Phase 2: Swap staging → production.
-    athena_ddl(f"DROP TABLE IF EXISTS {prod_table}")
+    # Phase 2: Swap staging S3 data → production location.
+    # keyword_trends is a CFN-managed table with partition projection — no
+    # DROP/CTAS needed; Athena discovers partitions from S3 automatically.
     _empty_s3_prefix(gold_location)
     _copy_s3_prefix(staging_location, gold_location)
-    _ctas(prod_table, gold_location)
 
     # Phase 3: Cleanup staging.
     athena_ddl(f"DROP TABLE IF EXISTS {staging_table}")

@@ -290,11 +290,9 @@ Resources:
               FROM agg
           ),
           prev_agg AS (
-              SELECT keyword_norm, platform_group, derived_genre, dt AS trend_date_7d,
-                     CAST(RANK() OVER (PARTITION BY platform_group, derived_genre, dt ORDER BY COUNT(*) DESC) AS integer) AS rank_prev
-              FROM {curated_db}.curated
-              GROUP BY keyword_norm, platform_group, derived_genre, dt
-              HAVING COUNT(*) >= {min_volume}
+              SELECT keyword_norm, platform_group, derived_genre, trend_date AS trend_date_7d,
+                     CAST(RANK() OVER (PARTITION BY platform_group, derived_genre, trend_date ORDER BY search_count DESC) AS integer) AS rank_prev
+              FROM agg
           ),
           prev_best AS (
               SELECT r.trend_date AS for_date, p.keyword_norm, p.platform_group, p.derived_genre, p.rank_prev,
@@ -311,7 +309,7 @@ Resources:
                  r.search_count, r.enter_count, r.abandoned_count, r.abandon_rate_pct, r.unique_users,
                  r.rank_today, p.rank_prev AS rank_7d_ago,
                  CASE WHEN p.rank_prev IS NULL THEN true ELSE false END AS is_new_entrant,
-                 CASE WHEN p.rank_prev IS NULL THEN NULL ELSE p.rank_prev - r.rank_today END AS rank_delta,
+                 CASE WHEN p.rank_prev IS NULL THEN NULL ELSE p.rank_prev - r.rank_today END AS rank_improvement,
                  r.trend_date
           FROM ranked r
           LEFT JOIN prev_best p ON p.for_date=r.trend_date AND p.keyword_norm=r.keyword_norm
@@ -403,10 +401,8 @@ Resources:
               if count == 0:
                   athena_ddl(f"DROP TABLE IF EXISTS {staging_table}"); _empty_s3_prefix(staging_location)
                   raise RuntimeError("Staging CTAS produced 0 rows — gold table unchanged")
-              athena_ddl(f"DROP TABLE IF EXISTS {prod_table}")
               _empty_s3_prefix(gold_location)
               _copy_s3_prefix(staging_location, gold_location)
-              _ctas(prod_table, gold_location)
               athena_ddl(f"DROP TABLE IF EXISTS {staging_table}")
               _empty_s3_prefix(staging_location)
               logger.info(f"Gold table written: {count} rows")
@@ -608,6 +604,60 @@ Resources:
               Type: boolean
         PartitionKeys:
           - Name: dt
+            Type: date
+
+  rKeywordTrendsTable:
+    Type: AWS::Glue::Table
+    DependsOn: rGoldDatabase
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref pGoldDatabaseName
+      TableInput:
+        Name: keyword_trends
+        Description: Gold-layer keyword rankings — per-keyword×platform×genre×date, partitioned by trend_date
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: parquet
+          projection.enabled: "true"
+          projection.trend_date.type: date
+          projection.trend_date.format: yyyy-MM-dd
+          projection.trend_date.range: "2022-01-01,NOW+1YEARS"
+          projection.trend_date.interval: "1"
+          projection.trend_date.interval.unit: DAYS
+          storage.location.template: !Sub s3://${pGoldBucket}/ott/searchevents/gold/keyword_trends/trend_date=${!trend_date}/
+        StorageDescriptor:
+          Location: !Sub s3://${pGoldBucket}/ott/searchevents/gold/keyword_trends/
+          InputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
+          Columns:
+            - Name: keyword_norm
+              Type: string
+            - Name: platform_group
+              Type: string
+            - Name: derived_genre
+              Type: string
+            - Name: search_count
+              Type: bigint
+            - Name: enter_count
+              Type: bigint
+            - Name: abandoned_count
+              Type: bigint
+            - Name: abandon_rate_pct
+              Type: double
+            - Name: unique_users
+              Type: bigint
+            - Name: rank_today
+              Type: int
+            - Name: rank_7d_ago
+              Type: int
+            - Name: is_new_entrant
+              Type: boolean
+            - Name: rank_improvement
+              Type: int
+        PartitionKeys:
+          - Name: trend_date
             Type: date
 
 Outputs:

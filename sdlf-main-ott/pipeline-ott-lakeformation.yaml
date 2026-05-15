@@ -40,8 +40,8 @@ Parameters:
 
 Resources:
 
-  # ContentGap Lambda — queries curated for abandoned keywords but never
-  # needs the raw hashed user identifier.
+  # ContentGap Lambda — needs has_premium (premium_vs_free query) but not
+  # user identity, session IDs, or subscription counts.
   rLFContentGap:
     Type: AWS::LakeFormation::PrincipalPermissions
     Properties:
@@ -55,12 +55,14 @@ Resources:
           ColumnWildcard:
             ExcludedColumnNames:
               - user_id_hashed
+              - search_session_id
+              - subscription_count
       Permissions:
         - SELECT
       PermissionsWithGrantOption: []
 
-  # LUT Refresh Lambda — queries UNKNOWN keywords but does not need
-  # user identity data.
+  # LUT Refresh Lambda — only reads keyword_norm + derived_genre; excludes
+  # all user-fingerprinting columns.
   rLFLutRefresh:
     Type: AWS::LakeFormation::PrincipalPermissions
     Properties:
@@ -74,6 +76,9 @@ Resources:
           ColumnWildcard:
             ExcludedColumnNames:
               - user_id_hashed
+              - search_session_id
+              - has_premium
+              - subscription_count
       Permissions:
         - SELECT
       PermissionsWithGrantOption: []

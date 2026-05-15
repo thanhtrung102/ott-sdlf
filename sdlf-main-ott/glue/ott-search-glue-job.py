@@ -138,7 +138,7 @@ def clean_datetime(dt_str: str):
 
 # ── Step 14: Premium flag ─────────────────────────────────────────────────────
 
-_PREMIUM_PLANS = {"VIP", "HBO GO+", "K+", "MAX", "MAX XMAS"}
+_PREMIUM_PLANS = {"VIP", "HBO GO+", "K+", "MAX"}
 
 
 @udf(BooleanType())
@@ -228,7 +228,13 @@ def run() -> None:
     # ── Steps 5-6 ────────────────────────────────────────────────────────────
     df = (
         df
-        .withColumn("session_action", col("category"))
+        .withColumn(
+            "session_action",
+            when(col("category") == lit("quit"),  lit("ABANDON"))
+            .when(col("category") == lit("enter"), lit("SUBMIT"))
+            .when(col("category").isNotNull(),     F.upper(col("category")))
+            .otherwise(lit(None)),
+        )
         .withColumn("is_search_abandoned", col("category") == lit("quit"))
     )
 
@@ -343,7 +349,7 @@ def run() -> None:
         out.write
         .mode("overwrite")
         .option("compression", "snappy")
-        .partitionBy("dt", "derived_genre")
+        .partitionBy("dt")
         .parquet(OUTPUT)
     )
 
