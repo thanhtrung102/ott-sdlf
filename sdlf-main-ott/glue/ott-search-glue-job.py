@@ -70,7 +70,7 @@ try:
     _pdp_raw = getResolvedOptions(sys.argv, ["PUSH_DOWN_PREDICATE"])["PUSH_DOWN_PREDICATE"]
     _PUSH_DOWN_PREDICATE = None if _pdp_raw.lower() in ("all", "none", "") else _pdp_raw
 except Exception:
-    _PUSH_DOWN_PREDICATE = "dt >= date_format(date_sub(current_date(), 2), 'yyyy-MM-dd')"
+    _PUSH_DOWN_PREDICATE = None
 
 SOURCE = args["SOURCE_LOCATION"].rstrip("/")
 OUTPUT = args["OUTPUT_LOCATION"].rstrip("/")
@@ -82,6 +82,7 @@ glueContext = GlueContext(sc)
 spark = glueContext.spark_session
 # Prevents EXCEPTION-mode timestamp failures on corrupted datetime strings.
 spark.conf.set("spark.sql.legacy.timeParserPolicy", "CORRECTED")
+spark.conf.set("spark.sql.sources.partitionOverwriteMode", "DYNAMIC")
 
 job = Job(glueContext)
 job.init(args["JOB_NAME"], args)
@@ -216,7 +217,7 @@ def run() -> None:
     df = df.filter(year(col("event_ts")) >= 2015)
 
     # Deduplicate on event_id — guards against double-writes from Glue job retries.
-    df = df.dropDuplicates(["event_id"])
+    df = df.dropDuplicates(["eventid"])
 
     # ── Step 4: Vietnam timezone hour ────────────────────────────────────────
     df = df.withColumn(

@@ -145,8 +145,8 @@ Resources:
           storage.location.template: !Sub s3://${pRawBucket}/${pTeamName}/${pDatasetName}/${!dt}/
         StorageDescriptor:
           Location: !Sub s3://${pRawBucket}/${pTeamName}/${pDatasetName}/
-          InputFormat: org.apache.hadoop.mapred.TextInputFormat
-          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          InputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
           SerdeInfo:
             SerializationLibrary: org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
           Columns:
@@ -170,6 +170,73 @@ Resources:
               Type: string
         PartitionKeys:
           - Name: dt
+            Type: string
+
+  rCuratedSearchEventsTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref pGlueDatabaseName
+      TableInput:
+        Name: curated
+        Description: Curated OTT search events — 19-column enriched Parquet, partitioned by dt + derived_genre
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: parquet
+          projection.enabled: "true"
+          projection.dt.type: date
+          projection.dt.format: yyyy-MM-dd
+          projection.dt.range: "2022-01-01,NOW+1YEARS"
+          projection.dt.interval: "1"
+          projection.dt.interval.unit: DAYS
+          projection.derived_genre.type: custom
+          projection.derived_genre.custom.pattern: "[A-Z][A-Z_]*"
+          storage.location.template: !Sub s3://${pAnalyticsBucket}/${pTeamName}/${pDatasetName}/curated/dt=${!dt}/derived_genre=${!derived_genre}/
+        StorageDescriptor:
+          Location: !Sub s3://${pAnalyticsBucket}/${pTeamName}/${pDatasetName}/curated/
+          InputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
+          Columns:
+            - Name: event_id
+              Type: string
+            - Name: event_ts
+              Type: timestamp
+            - Name: hour_of_day_vn
+              Type: int
+            - Name: user_id_hashed
+              Type: string
+            - Name: user_is_authenticated
+              Type: boolean
+            - Name: session_action
+              Type: string
+            - Name: is_search_abandoned
+              Type: boolean
+            - Name: keyword_norm
+              Type: string
+            - Name: platform_group
+              Type: string
+            - Name: network_type_norm
+              Type: string
+            - Name: isp_segment
+              Type: string
+            - Name: has_premium
+              Type: boolean
+            - Name: subscription_count
+              Type: int
+            - Name: plan_names
+              Type: array<string>
+            - Name: search_session_id
+              Type: string
+            - Name: is_repeat_search
+              Type: boolean
+            - Name: _pipeline_run_id
+              Type: string
+        PartitionKeys:
+          - Name: dt
+            Type: string
+          - Name: derived_genre
             Type: string
 
 Outputs:
