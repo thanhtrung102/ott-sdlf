@@ -51,6 +51,8 @@ copy: s3://...-raw-prod/ott/searchevents/20220614/part-00000-... to s3://...-raw
 Ingestion triggered at 05/20/2026 09:32:41
 ```
 
+> ℹ️ **NOTE — this trigger copies an *existing* file.** `20220615`'s rows carry the same `eventid` values as `20220614`. The Glue job deduplicates by `eventid` across **all** `dt` partitions, so the new partition adds ~0 unique rows — `post_dedup` stays flat — and overall `retention` drops on every repeat run. On a deployment that has already been triggered a few times, `retention` can fall below the `0.7` threshold and fire `LINEAGE_ALARM` (see §5.4.4). This is expected behaviour from re-ingesting duplicates, **not a pipeline failure** — Stage B still `SUCCEEDED`. To exercise the pipeline with genuinely new rows, stage a distinct day's Parquet instead of copying one.
+
 ---
 
 ## 5.4.3 Stage A — event routing (~30 s)
@@ -128,7 +130,9 @@ aws logs filter-log-events --region ap-southeast-1 `
 LINEAGE run_id=jr_<id> raw=1298470 post_year=1298261 post_dedup=1145826 output=1145826 retention=0.882
 ```
 
-`retention ≥ 0.7` is required; below that, `LINEAGE_ALARM` fires SNS.
+`retention` is `output / raw` — the fraction of raw rows that survived year-filtering and `eventid` dedup. `retention ≥ 0.7` is the healthy band; below it, the Glue script logs a `LINEAGE_ALARM` line.
+
+> ℹ️ `retention` falls every time you re-run the §5.4.2 trigger, because copying an existing file adds raw rows that all dedup away (`raw` grows, `post_dedup` stays flat). A deployment triggered several times can show `retention ≈ 0.68` and a `LINEAGE_ALARM` line — that is the duplicate-ingest side-effect described in §5.4.2, not a Stage B failure. A first ingest of 14 genuinely distinct days lands around `0.88`; a single duplicate re-trigger on top of that pulls it toward `0.7`.
 
 ---
 
