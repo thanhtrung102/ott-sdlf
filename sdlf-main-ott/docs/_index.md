@@ -2,42 +2,46 @@
 title: "OTT Search Analytics Pipeline"
 date: 2026-05-20
 weight: 1
-chapter: true
-description: "OTT Search Analytics Pipeline — AWS SDLF · FCJ Workshop"
+chapter: false
+description: "First Cloud Journey report — OTT Search Analytics Pipeline on AWS SDLF"
 ---
 
-# OTT Search Analytics Pipeline
+# First Cloud Journey — Internship Report
+
+This site follows the **First Cloud Journey (FCJ)** report template. The seven sections below mirror the standard FCJ structure; the fully-worked deliverable is **section 5, the Workshop**.
+
+---
+
+## Report sections
+
+| # | Section | Status |
+|---|---|---|
+| 1 | [Worklog](1-worklog/) | Placeholder |
+| 2 | [Proposal](2-proposal/) | Placeholder |
+| 3 | [Translated Blogs](3-translated-blogs/) | Placeholder |
+| 4 | [Events Participated](4-events-participated/) | Placeholder |
+| 5 | **[Workshop](5-workshop/)** | **Complete — the live project** |
+| 6 | [Self-Assessment](6-self-assessment/) | Placeholder |
+| 7 | [Sharing and Feedback](7-sharing-and-feedback/) | Placeholder |
+
+---
+
+## Section 5 — the Workshop
 
 A production-grade serverless data lake on **AWS SDLF** that ingests OTT search-event Parquet, enriches it with Vietnamese-keyword genre classification, and serves five analytics reports + a key-protected HTTP API.
 
-> **This site is a workshop.** The [**Workshop**](workshop/) chapter is the fully-written, hands-on path. Sections 1-10 below are short reference stubs that point you at the relevant workshop chapter.
+The [Workshop](5-workshop/) is 8 chapters, ~100 minutes, every step copy-paste reproducible with live-captured output:
 
----
-
-## Start here
-
-| | |
+| | Chapter |
 |---|---|
-| **[Workshop](workshop/)** | 8 chapters, ~100 min, copy-paste reproducible commands with live output for every step. Build the whole pipeline end-to-end on your own AWS account. |
-
----
-
-## Reference sections
-
-Short stubs of each subsystem; deeper hands-on coverage is in the workshop.
-
-| # | Section | Workshop pointer |
-|---|---|---|
-| 1 | [Introduction](1-introduction/) | [Workshop §1 — Overview](workshop/1-overview/) |
-| 2 | [Architecture](2-architecture/) | [Workshop §1 — Overview](workshop/1-overview/) |
-| 3 | [Data Ingestion](3-ingestion/) | [Workshop §4 — Ingest](workshop/4-ingest/) |
-| 4 | [Data Quality](4-quality/) | [Workshop §4 — Ingest](workshop/4-ingest/) |
-| 5 | [Analytics Pipelines](5-analytics/) | [Workshop §5 — Analyze](workshop/5-analyze/) |
-| 6 | [Gold Layer](6-gold-layer/) | [Workshop §5 — Analyze](workshop/5-analyze/) |
-| 7 | [HTTP API](7-api/) | [Workshop §5 — Analyze](workshop/5-analyze/) |
-| 8 | [Security](8-security/) | [Workshop §3 — Deploy](workshop/3-deploy/) |
-| 9 | [Monitoring](9-monitoring/) | [Workshop §6 — Verify](workshop/6-verify/) |
-| 10 | [Deployment](10-deployment/) | [Workshop §3 — Deploy](workshop/3-deploy/) |
+| 5.1 | [Overview](5-workshop/5.1-overview/) — architecture + the 14 AWS services |
+| 5.2 | [Prerequisites](5-workshop/5.2-prerequisites/) — account, IAM, Bedrock, source data |
+| 5.3 | [Deploy](5-workshop/5.3-deploy/) — 11 CloudFormation stacks via CI/CD |
+| 5.4 | [Ingest](5-workshop/5.4-ingest/) — Stage A → B → DQ |
+| 5.5 | [Analyze](5-workshop/5.5-analyze/) — the three analytics Lambdas + API |
+| 5.6 | [Verify](5-workshop/5.6-verify/) — 16-assertion contract test |
+| 5.7 | [Live Verification](5-workshop/5.7-verification/) — every deployed resource + business insights |
+| 5.8 | [Cleanup](5-workshop/5.8-cleanup/) — tear it all down |
 
 ---
 
