@@ -18,7 +18,7 @@ A production-grade serverless data lake on **AWS SDLF** that ingests OTT search-
 
 | | |
 |---|---|
-| **[Workshop](workshop/)** | 7 chapters, ~90 min, copy-paste reproducible commands with live output for every step. Build the whole pipeline end-to-end on your own AWS account. |
+| **[Workshop](workshop/)** | 8 chapters, ~100 min, copy-paste reproducible commands with live output for every step. Build the whole pipeline end-to-end on your own AWS account. |
 
 ---
 

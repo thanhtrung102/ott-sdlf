@@ -16,6 +16,6 @@ A production-grade serverless data lake on AWS SDLF that ingests OTT search-even
 
 ## Where to start
 
-- **Build it yourself**: [Workshop](../workshop/) — 7 chapters, ~90 min, copy-paste reproducible.
+- **Build it yourself**: [Workshop](../workshop/) — 8 chapters, ~90 min, copy-paste reproducible.
 - **Architecture map**: [chapter 2](../2-architecture/).
 - **Deploy via CI/CD**: [chapter 10](../10-deployment/).

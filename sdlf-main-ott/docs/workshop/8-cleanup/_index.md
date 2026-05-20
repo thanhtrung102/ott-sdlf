@@ -1,22 +1,20 @@
 ---
-title: "7. Cleanup"
+title: "8. Cleanup"
 date: 2026-05-20
-weight: 7
+weight: 8
 chapter: false
-pre: <b>7. </b>
+pre: <b>8. </b>
 ---
 
-# 7. Cleanup
+# 8. Cleanup
 
 Tear down everything you built so the AWS account ends up with no remaining OTT-pipeline resources. Order matters: stacks first, then buckets, then framework, then SSM. Doing this out of order leaves orphaned S3 objects you can't delete because Lake Formation still gates them.
 
-{{% notice warning %}}
-Every command in this chapter is destructive. Make sure you are on the correct AWS account and region (`ap-southeast-1`) before running anything.
-{{% /notice %}}
+> ⚠️ **WARNING:** Every command in this chapter is destructive. Make sure you are on the correct AWS account and region (`ap-southeast-1`) before running anything.
 
 ---
 
-## 7.1 Stop CI/CD first
+## 8.1 Stop CI/CD first
 
 If the CI/CD pipeline is set up, disable it before deleting anything — otherwise pushing or re-triggering will re-create what you're about to delete.
 
@@ -34,7 +32,7 @@ We'll re-enable / re-delete at the end.
 
 ---
 
-## 7.2 Delete the 11 OTT-managed stacks
+## 8.2 Delete the 11 OTT-managed stacks
 
 Reverse dependency order. The script below deletes in the safest sequence (consumers first, producers last).
 
@@ -89,7 +87,7 @@ aws cloudformation list-stacks --region ap-southeast-1 `
 
 ---
 
-## 7.3 Empty the S3 prefixes the pipeline created
+## 8.3 Empty the S3 prefixes the pipeline created
 
 CFN stack deletion does NOT delete the data the pipeline wrote — that lives in framework-managed buckets. You have to empty the OTT-specific prefixes manually.
 
@@ -125,11 +123,11 @@ foreach ($b in @($RAW, $STAGE, $ANALYTICS, $ARTIFACTS)) {
 
 **Expected**: zero objects in each prefix.
 
-> The buckets themselves are framework-owned; leave them. Section 7.5 covers the framework teardown if you want to go further.
+> The buckets themselves are framework-owned; leave them. Section 8.5 covers the framework teardown if you want to go further.
 
 ---
 
-## 7.4 Clean SSM parameters this workshop created
+## 8.4 Clean SSM parameters this workshop created
 
 ```powershell
 # The API key — workshop-specific
@@ -149,7 +147,7 @@ aws ssm get-parameters-by-path --path /sdlf/ --recursive --region ap-southeast-1
 
 ---
 
-## 7.5 (Optional) Tear down the SDLF framework
+## 8.5 (Optional) Tear down the SDLF framework
 
 Only do this if you're done with SDLF entirely on this account. If you're keeping SDLF for other datasets, **skip this section**.
 
@@ -178,7 +176,7 @@ foreach ($b in @($RAW, $STAGE, $ANALYTICS, $ARTIFACTS)) {
 
 ---
 
-## 7.6 Delete the CI/CD pipeline (if previously deployed)
+## 8.6 Delete the CI/CD pipeline (if previously deployed)
 
 ```powershell
 aws cloudformation delete-stack --stack-name sdlf-ott-cicd --region ap-southeast-1
@@ -189,7 +187,7 @@ The CodeStar connection to GitHub remains (it's account-level) — delete via th
 
 ---
 
-## 7.7 Final verification
+## 8.7 Final verification
 
 ```powershell
 aws cloudformation list-stacks --region ap-southeast-1 `
@@ -197,7 +195,7 @@ aws cloudformation list-stacks --region ap-southeast-1 `
   --query "StackSummaries[?contains(StackName, 'sdlf-')].StackName" --output text
 ```
 
-**Expected** (if you ran 7.5 and 7.6): empty output.
+**Expected** (if you ran 8.5 and 8.6): empty output.
 
 ```powershell
 aws lakeformation list-permissions --region ap-southeast-1 `
@@ -212,13 +210,13 @@ aws lakeformation list-permissions --region ap-southeast-1 `
 
 | Section | Time | Cost left running |
 |---|---|---|
-| 7.2 Stack deletes | ~10 min | $0 |
-| 7.3 S3 empty | ~2 min | $0 |
-| 7.4 SSM delete | <1 min | $0 |
-| 7.5 Framework teardown (optional) | ~5 min | $0 (after KMS 7-day wait) |
-| 7.6 CI/CD delete (optional) | ~3 min | $0 |
+| 8.2 Stack deletes | ~10 min | $0 |
+| 8.3 S3 empty | ~2 min | $0 |
+| 8.4 SSM delete | <1 min | $0 |
+| 8.5 Framework teardown (optional) | ~5 min | $0 (after KMS 7-day wait) |
+| 8.6 CI/CD delete (optional) | ~3 min | $0 |
 
-If you ran 7.1 → 7.4, your monthly AWS bill from this workshop drops to **$0**. The empty foundation buckets cost ~$0.01/month if you leave them. The KMS key in pending-deletion state costs $0 (no GenerateDataKey calls without anything using it).
+If you ran 8.1 → 8.4, your monthly AWS bill from this workshop drops to **$0**. The empty foundation buckets cost ~$0.01/month if you leave them. The KMS key in pending-deletion state costs $0 (no GenerateDataKey calls without anything using it).
 
 ---
 

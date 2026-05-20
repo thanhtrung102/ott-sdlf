@@ -46,7 +46,7 @@ This pipeline consumes 14 AWS services. Skim the table; you'll see each one in a
 | **Amazon SQS** | Five DLQs (Stage A/B + the three analytics Lambdas) — all with depth alarms. |
 | **Amazon SNS** | Operational notifications: SM failures, DLQ depth, daily report delivery (with presigned URLs). |
 | **AWS KMS** | One customer-managed key encrypts every S3 bucket, every SQS DLQ, every CloudWatch log group. |
-| **Amazon CloudWatch** | A single dashboard + 14 alarms covering Step Functions failures, Glue runtime, Lambda errors/throttles/duration, and all 5 DLQ depths. |
+| **Amazon CloudWatch** | A single dashboard + 17 alarms covering Step Functions failures, Glue runtime, Lambda errors/throttles/duration, and all 5 DLQ depths. |
 
 Reference: [Architecture](../../2-architecture/) for the full component dependency map.
 

@@ -78,11 +78,11 @@ aws stepfunctions list-executions --state-machine-arn $smArn --region ap-southea
 If it hangs in `RUNNING` for >2 min, check the Stage A DLQ:
 
 ```powershell
-aws sqs get-queue-attributes --queue-url "$(aws sqs get-queue-url --queue-name sdlf-ott-mainA-dlq --query QueueUrl --output text --region ap-southeast-1)" `
-  --attribute-names ApproximateNumberOfMessagesVisible --region ap-southeast-1
+aws sqs get-queue-attributes --queue-url "$(aws sqs get-queue-url --queue-name sdlf-ott-mainA-dlq.fifo --query QueueUrl --output text --region ap-southeast-1)" `
+  --attribute-names ApproximateNumberOfMessages --region ap-southeast-1
 ```
 
-`ApproximateNumberOfMessagesVisible: 0` is healthy.
+`ApproximateNumberOfMessages: 0` is healthy. (Stage A/B DLQs are FIFO queues — note the `.fifo` suffix.)
 
 ---
 
@@ -90,9 +90,7 @@ aws sqs get-queue-attributes --queue-url "$(aws sqs get-queue-url --queue-name s
 
 Stage B picks up the EventBridge event, starts the Glue job, waits for completion. Spark reads all dt partitions under SOURCE_LOCATION (not just the new one), so wall-clock depends on cumulative day count.
 
-{{% notice info %}}
-This is the longest step in the workshop. Walk away for ~25 minutes; the rest of the chapter can wait. The Glue job emits a `LINEAGE` log line when it finishes — that's the signal to come back.
-{{% /notice %}}
+> ℹ️ **NOTE:** This is the longest step in the workshop. Walk away for ~25 minutes; the rest of the chapter can wait. The Glue job emits a `LINEAGE` log line when it finishes — that's the signal to come back.
 
 ```powershell
 $smArn = "arn:aws:states:ap-southeast-1:$(aws sts get-caller-identity --query Account --output text):stateMachine:sdlf-ott-mainB-sm"

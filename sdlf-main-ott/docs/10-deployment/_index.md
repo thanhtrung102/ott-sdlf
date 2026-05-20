@@ -25,7 +25,7 @@ Every push to `main` triggers `sdlf-ott-cicd` CodePipeline (4 stages: Source →
 6.  pipeline-ott-contentgap      — Content Gap Lambda + 5 catalog tables + DLQ
 7.  pipeline-ott-trending        — Trending Lambda + gold catalog + DLQ
 8.  pipeline-ott-goldquality     — Gold DQ SM
-9.  pipeline-ott-monitoring      — CloudWatch dashboard + 14 alarms
+9.  pipeline-ott-monitoring      — CloudWatch dashboard + 17 alarms
 10. pipeline-ott-lakeformation   — Column-level RBAC on curated
 11. pipeline-ott-api             — HTTP API
 ```

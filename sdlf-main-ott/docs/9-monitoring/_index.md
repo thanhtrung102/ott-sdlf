@@ -15,8 +15,8 @@ pre: <b>9. </b>
 | Resource | Count | Owner stack |
 |---|---|---|
 | CloudWatch dashboard | 1 (`sdlf-ott-searchevents-pipeline`) | `pipeline-ott-monitoring.yaml` |
-| CloudWatch alarms | 14 | `pipeline-ott-monitoring.yaml` |
+| CloudWatch alarms | 17 | `pipeline-ott-monitoring.yaml` |
 | DLQs | 5 (Stage A, Stage B, Trending, Content Gap, LUT-Refresh) | per-Lambda + per-SM stacks |
 | X-Ray tracing | Active on all 4 analytics Lambdas + API Lambda | per-Lambda stacks |
 
-All 14 alarms publish to the `/SDLF/SNS/ott/Notifications` topic on `ALARM` state.
+All 17 alarms publish to the `/SDLF/SNS/ott/Notifications` topic on `ALARM` state.

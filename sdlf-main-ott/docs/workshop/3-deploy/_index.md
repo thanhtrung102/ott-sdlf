@@ -10,9 +10,7 @@ pre: <b>3. </b>
 
 The repo already has CI/CD set up — that's the recommended deploy path. You push to `main` and the `sdlf-ott-cicd` CodePipeline takes care of validating + deploying every CloudFormation stack in dependency order.
 
-{{% notice tip %}}
-**CI/CD is the recommended path** (section 3.2). The local PowerShell path (section 3.8) is only for first-time bootstrap before CI/CD exists, or for rapid iteration when you don't want to wait on a `git push`.
-{{% /notice %}}
+> 💡 **TIP:** CI/CD is the recommended path (section 3.2). The local PowerShell path (section 3.8) is only for first-time bootstrap before CI/CD exists, or for rapid iteration when you don't want to wait on a `git push`.
 
 | Path | Use when |
 |---|---|
@@ -36,7 +34,7 @@ Eleven CloudFormation stacks, in dependency order:
 6.  sdlf-pipeline-ott-contentgap     — Content-Gap Lambda + 5 catalog tables + DLQ
 7.  sdlf-pipeline-ott-trending       — Trending Lambda + gold catalog + DLQ
 8.  sdlf-pipeline-ott-goldquality    — Gold-layer DQ state machine
-9.  sdlf-pipeline-ott-monitoring     — CloudWatch dashboard + 14 alarms
+9.  sdlf-pipeline-ott-monitoring     — CloudWatch dashboard + 17 alarms
 10. sdlf-pipeline-ott-lakeformation  — Column-level RBAC on curated
 11. sdlf-pipeline-ott-api            — HTTP API (x-api-key, freshness headers, arm64)
 ```
@@ -126,9 +124,7 @@ aws codepipeline get-pipeline-state --name sdlf-ott-cicd --region ap-southeast-1
 
 The Lake Formation grants are declared in `pipeline-ott-lakeformation.yaml` but stay dormant until you revoke `IAM_ALLOWED_PRINCIPALS` on each protected table.
 
-{{% notice warning %}}
-Running this script immediately restricts access on `curated`, `raw_search_events`, `dq_results`, and `keyword_trends` to the 7 explicitly-granted principals. Any other role that previously read these tables via IAM will lose access.
-{{% /notice %}}
+> ⚠️ **WARNING:** Running this script immediately restricts access on `curated`, `raw_search_events`, `dq_results`, and `keyword_trends` to the 7 explicitly-granted principals. Any other role that previously read these tables via IAM will lose access.
 
 ```powershell
 python D:\ott-sdlf\scripts\lf_grants.py --apply

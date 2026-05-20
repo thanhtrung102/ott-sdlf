@@ -16,9 +16,7 @@ The pipeline ran, the analytics fired, the API answered. This chapter runs three
 
 `scripts/contract_test.py` is the regression test that runs on every CI/CD deploy. It checks the end-user-facing contracts that have broken in past iterations.
 
-{{% notice tip %}}
-This is the single most useful verification command in the workshop. If `All contracts passed.` prints, the pipeline is healthy end-to-end (API + dashboard + Athena catalog).
-{{% /notice %}}
+> 💡 **TIP:** This is the single most useful verification command in the workshop. If `All contracts passed.` prints, the pipeline is healthy end-to-end (API + dashboard + Athena catalog).
 
 ```powershell
 $env:OTT_API_KEY = (aws ssm get-parameter --name /sdlf/ott/api-key/prod `
@@ -185,14 +183,14 @@ aws cloudwatch describe-alarms --alarm-name-prefix sdlf-ott `
   --region ap-southeast-1 --query "MetricAlarms | length(@)" --output text
 ```
 
-**Expected**: `14` — the full 14-alarm count.
+**Expected**: `17` — the full alarm count.
 
 ```powershell
 aws cloudwatch describe-alarms --alarm-name-prefix sdlf-ott `
-  --region ap-southeast-1 --query "MetricAlarms[?StateValue!='OK'].AlarmName" --output text
+  --region ap-southeast-1 --query "MetricAlarms[?StateValue=='ALARM'].AlarmName" --output text
 ```
 
-**Expected**: empty (no alarms in ALARM/INSUFFICIENT_DATA). If any alarm is firing, fix the underlying issue before declaring success.
+**Expected** (live): the two near-timeout alarms may show — `sdlf-ott-mainCG-report-near-timeout` and `sdlf-ott-mainLUT-refresh-near-timeout`. These fire when a Lambda's p90 duration nears its timeout; they are an early-warning signal, not an outage. Any `*-errors` or `*-sm-execution-failed` alarm in `ALARM`, however, must be fixed before declaring success. Chapter 7 covers this in detail.
 
 ---
 
@@ -232,4 +230,4 @@ If `Status: 200` + a parseable `X-Data-Freshness` timestamp + a non-empty top re
 
 ---
 
-**Next**: [chapter 7 — Cleanup](../7-cleanup/).
+**Next**: [chapter 7 — Live Verification](../7-verification/).
