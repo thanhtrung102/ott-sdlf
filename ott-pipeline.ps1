@@ -30,6 +30,9 @@ $StageBucket     = "fpt-ott-ap-southeast-1-$Account-stage-prod"
 $AnalyticsBucket = "fpt-ott-ap-southeast-1-$Account-analytics-prod"
 $ArtifactsBucket = "fpt-ott-ap-southeast-1-$Account-artifacts-prod"
 $AthenaBucket    = "fpt-ott-ap-southeast-1-$Account-athena-prod"
+# Glue script + classifier zip live in a project bucket, NOT the SDLF artifacts
+# bucket; the Glue role's S3 grant is scoped to this bucket's ott/searchevents/ prefix.
+$GlueBucket      = "ott-search-$Account-prod"
 
 $SmAArn  = "arn:aws:states:${Region}:${Account}:stateMachine:sdlf-ott-mainA-sm"
 $SmBArn  = "arn:aws:states:${Region}:${Account}:stateMachine:sdlf-ott-mainB-sm"
@@ -167,10 +170,10 @@ if (-not $SkipDeploy -and -not $AnalyticsOnly) {
         }
     }
 
-    # Upload the current Glue script to the artifacts bucket before deploying the job stack
-    Write-Host "  uploading Glue script to s3://$ArtifactsBucket/ott/searchevents/ ..."
+    # Upload the current Glue script to the Glue bucket before deploying the job stack
+    Write-Host "  uploading Glue script to s3://$GlueBucket/ott/searchevents/ ..."
     aws s3 cp "$Tpl\glue\ott-search-glue-job.py" `
-        "s3://$ArtifactsBucket/ott/searchevents/ott-search-glue-job.py" `
+        "s3://$GlueBucket/ott/searchevents/ott-search-glue-job.py" `
         --region $Region | Out-Null
 
     # Package + upload all analytics Lambdas (single source of truth = lambda/*/src/lambda_function.py).
@@ -183,7 +186,7 @@ if (-not $SkipDeploy -and -not $AnalyticsOnly) {
     # 1. Glue ETL job
     Deploy-Stack "sdlf-ott-searchevents-glue-job" "$Tpl\pipeline-ott-glue-job.yaml" @(
         "pTeamName=ott", "pDatasetName=searchevents",
-        "pArtifactsBucket=$ArtifactsBucket", "pKmsKeyArn=$KmsKey",
+        "pArtifactsBucket=$GlueBucket", "pKmsKeyArn=$KmsKey",
         "pPipelineDeploymentInstance=mainB"
     )
 
@@ -261,6 +264,27 @@ if (-not $SkipDeploy -and -not $AnalyticsOnly) {
 
     # 10. Lake Formation column-level RBAC (fully SSM-defaulted)
     Deploy-Stack "sdlf-pipeline-ott-lakeformation" "$Tpl\pipeline-ott-lakeformation.yaml"
+
+    # DATA_LOCATION_ACCESS for the Trending role's CTAS to the gold prefix in the
+    # LF-registered analytics bucket. Granted via CLI, not CFN: the
+    # AWS::LakeFormation::PrincipalPermissions DataLocation resource has a known
+    # stabilization issue. Idempotent — safe to re-run.
+    Write-Host "  granting LF DATA_LOCATION_ACCESS to Trending role ..." -NoNewline
+    $trendingRole = (aws ssm get-parameter --name "/sdlf/pipeline/rRole/ott-mainTR" `
+        --query "Parameter.Value" --output text --region $Region 2>$null)
+    if ($trendingRole -and $trendingRole -ne "None") {
+        $lfResource = '{"DataLocation":{"CatalogId":"' + $Account + `
+            '","ResourceArn":"arn:aws:s3:::' + $AnalyticsBucket + '/ott/searchevents/gold/"}}'
+        aws lakeformation grant-permissions `
+            --principal "DataLakePrincipalIdentifier=$trendingRole" `
+            --resource $lfResource `
+            --permissions DATA_LOCATION_ACCESS `
+            --region $Region 2>&1 | Out-Null
+        Write-Host " OK" -ForegroundColor Green
+    } else {
+        Write-Host ""
+        Write-Warn "Trending role SSM param /sdlf/pipeline/rRole/ott-mainTR not found — skipping LF grant"
+    }
 
     # 11. Monitoring dashboards + alarms (fully SSM-defaulted)
     Deploy-Stack "sdlf-pipeline-ott-monitoring" "$Tpl\pipeline-ott-monitoring.yaml"

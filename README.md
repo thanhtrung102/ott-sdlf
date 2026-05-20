@@ -10,16 +10,14 @@ Production-grade serverless data lake built on the [AWS Serverless Data Lake Fra
 
 | You want… | Read |
 |---|---|
-| Business context + scope | [`sdlf-main-ott/docs/1-introduction/`](sdlf-main-ott/docs/1-introduction/) |
-| End-to-end architecture diagram | [`sdlf-main-ott/docs/2-architecture/`](sdlf-main-ott/docs/2-architecture/) |
-| ETL design (Stage A/B + Glue) | [`sdlf-main-ott/docs/3-ingestion/`](sdlf-main-ott/docs/3-ingestion/) |
-| Data quality | [`sdlf-main-ott/docs/4-quality/`](sdlf-main-ott/docs/4-quality/) |
-| Analytics Lambdas | [`sdlf-main-ott/docs/5-analytics/`](sdlf-main-ott/docs/5-analytics/) |
-| Gold layer (`keyword_trends`) | [`sdlf-main-ott/docs/6-gold-layer/`](sdlf-main-ott/docs/6-gold-layer/) |
-| HTTP API (auth, headers, endpoints) | [`sdlf-main-ott/docs/7-api/`](sdlf-main-ott/docs/7-api/) |
-| Security (LF column-level, KMS, IAM) | [`sdlf-main-ott/docs/8-security/`](sdlf-main-ott/docs/8-security/) |
-| Monitoring (14 alarms, DLQs, X-Ray) | [`sdlf-main-ott/docs/9-monitoring/`](sdlf-main-ott/docs/9-monitoring/) |
-| Deployment (prereqs, CI/CD, smoke test) | [`sdlf-main-ott/docs/10-deployment/`](sdlf-main-ott/docs/10-deployment/) |
+| Workshop overview + architecture | [`docs/5-workshop/5.1-overview/`](sdlf-main-ott/docs/5-workshop/5.1-overview/) |
+| Prerequisites (AWS, Bedrock, SDLF stacks) | [`docs/5-workshop/5.2-prerequisites/`](sdlf-main-ott/docs/5-workshop/5.2-prerequisites/) |
+| Deploy (CI/CD + local PowerShell) | [`docs/5-workshop/5.3-deploy/`](sdlf-main-ott/docs/5-workshop/5.3-deploy/) |
+| Ingest (Stage A/B + Glue + DQ) | [`docs/5-workshop/5.4-ingest/`](sdlf-main-ott/docs/5-workshop/5.4-ingest/) |
+| Analyze (trending, content-gap, LUT-refresh) | [`docs/5-workshop/5.5-analyze/`](sdlf-main-ott/docs/5-workshop/5.5-analyze/) |
+| Verify (contract test, visuals, dashboard) | [`docs/5-workshop/5.6-verify/`](sdlf-main-ott/docs/5-workshop/5.6-verify/) |
+| Live verification report | [`docs/5-workshop/5.7-verification/`](sdlf-main-ott/docs/5-workshop/5.7-verification/) |
+| Cleanup / teardown | [`docs/5-workshop/5.8-cleanup/`](sdlf-main-ott/docs/5-workshop/5.8-cleanup/) |
 
 The `docs/` tree is the canonical reference; everything below is just the lay-of-the-land.
 
@@ -31,25 +29,24 @@ The `docs/` tree is the canonical reference; everything below is just the lay-of
 ott-sdlf/
 ├── README.md                # this file
 ├── ott-pipeline.ps1         # end-to-end local runner (deploy + ingest + analytics + verify)
-├── deploy.sh                # workshop-style sample-data deploy (Bash entry)
-├── run_workshop.sh          # full 14-day reproducible workshop script
-├── genre_classifier_pkg.zip # classifier zip uploaded to artifacts bucket (~865 KB)
+├── genre_classifier_pkg.zip # classifier zip staged in the Glue bucket (~865 KB)
 │
-├── data/                    # sample search events + genre taxonomy (for local smoke)
 ├── dashboard/               # static HTML dashboard prototype (gold-layer KPI view)
 │
 ├── scripts/                 # operational helpers (idempotent; called by ott-pipeline.ps1)
 │   ├── package_and_deploy_lambdas.py  # Lambda source → zip → S3 → lambda:UpdateFunctionCode
 │   ├── lf_grants.py                   # preemptive LF ALL grants (avoids deploy 403s)
 │   ├── contract_test.py               # 16-assertion post-deploy regression test
-│   └── audit_visuals.py               # reproducible Athena queries → ASCII visuals
+│   ├── verify_live.py                 # broad live health check (SMs, DLQs, alarms, row counts)
+│   ├── audit_visuals.py               # reproducible Athena queries → ASCII visuals
+│   └── regenerate_dashboard.py        # rebuild dashboard/index.html from the gold table
 │
 ├── sdlf-cicd/               # CI/CD: CodePipeline + CodeBuild (pushes to main auto-deploy)
 │   ├── template-cicd.yaml
 │   ├── buildspec-validate.yml
 │   └── buildspec-deploy.yml
 │
-├── sdlf-main/               # SDLF framework setup (foundations + team + dataset)
+├── sdlf-main/               # SDLF framework setup (foundations + team + dataset, prod)
 │   ├── foundations-ott-prod.yaml
 │   ├── team-ott-prod.yaml
 │   └── dataset-searchevents-prod.yaml
@@ -64,25 +61,24 @@ ott-sdlf/
 │   ├── pipeline-ott-trending.yaml      # WoW growth + gold CTAS
 │   ├── pipeline-ott-api.yaml           # HTTP API (x-api-key, X-Data-Freshness)
 │   ├── pipeline-ott-lakeformation.yaml # column-level RBAC
-│   ├── pipeline-ott-monitoring.yaml    # 14 alarms + dashboard
-│   ├── glue/ott-search-glue-job.py     # the enrichment script (19 columns out)
+│   ├── pipeline-ott-monitoring.yaml    # 17 alarms + dashboard
+│   ├── glue/ott-search-glue-job.py     # the enrichment script (17-column curated output)
 │   ├── lambda/{api,trending,content-gap,lut-refresh}/src/lambda_function.py
-│   └── docs/                            # Hugo site (markdown, served at sdlf.workshop.aws style)
+│   └── docs/                            # Hugo site (FCJ 7-section map; workshop = section 5)
 │
 └── sdlf-framework/          # upstream SDLF source (reference; deploys via SSM-resolved URLs)
 ```
 
 ---
 
-## Three deploy paths
+## Two deploy paths
 
 | Path | Use when | Command |
 |---|---|---|
-| **CI/CD (primary)** | Pushing to GitHub `main` | `git push origin main` — `sdlf-ott-cicd` CodePipeline auto-validates and deploys |
-| **Local PowerShell** | Iterating on Windows; want full pipeline + verify | `.\ott-pipeline.ps1` (deploys 11 stacks, copies a raw partition, waits for Stage A→B→DQ, invokes analytics Lambdas, runs contract test) |
-| **Workshop Bash** | Reproducing the full 14-day dataset run | `bash run_workshop.sh --source-bucket <name>` |
+| **CI/CD (canonical)** | Pushing to GitHub `main` | `git push origin main` — `sdlf-ott-cicd` CodePipeline runs `buildspec-validate.yml` then `buildspec-deploy.yml`, deploying all 11 stacks |
+| **Local PowerShell** | First-time bootstrap, or rapid iteration on Windows | `.\ott-pipeline.ps1` (deploys 11 stacks, copies a raw partition, waits for Stage A→B→DQ, invokes analytics Lambdas, runs the contract test) |
 
-A sample-data-only smoke (no full dataset, no analytics) is `bash deploy.sh -t ott -d searchevents -r ap-southeast-1`.
+`buildspec-deploy.yml` is the source of truth for deploy ordering and parameters; `ott-pipeline.ps1` mirrors it and additionally runs an ingest + analytics cycle.
 
 ---
 

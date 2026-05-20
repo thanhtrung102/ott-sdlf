@@ -2,7 +2,8 @@
 output/
 dist/
 build/
-*.zip                 # classifier zip is artifact-bucket-managed (LUT-refresh rebuilds it)
+# classifier zip is artifact-bucket-managed (LUT-refresh rebuilds it)
+*.zip
 
 # --- Python ---
 __pycache__/
