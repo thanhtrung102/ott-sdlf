@@ -90,6 +90,10 @@ aws sqs get-queue-attributes --queue-url "$(aws sqs get-queue-url --queue-name s
 
 Stage B picks up the EventBridge event, starts the Glue job, waits for completion. Spark reads all dt partitions under SOURCE_LOCATION (not just the new one), so wall-clock depends on cumulative day count.
 
+{{% notice info %}}
+This is the longest step in the workshop. Walk away for ~25 minutes; the rest of the chapter can wait. The Glue job emits a `LINEAGE` log line when it finishes — that's the signal to come back.
+{{% /notice %}}
+
 ```powershell
 $smArn = "arn:aws:states:ap-southeast-1:$(aws sts get-caller-identity --query Account --output text):stateMachine:sdlf-ott-mainB-sm"
 aws stepfunctions list-executions --state-machine-arn $smArn --region ap-southeast-1 `

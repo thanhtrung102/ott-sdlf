@@ -10,6 +10,10 @@ pre: <b>7. </b>
 
 Tear down everything you built so the AWS account ends up with no remaining OTT-pipeline resources. Order matters: stacks first, then buckets, then framework, then SSM. Doing this out of order leaves orphaned S3 objects you can't delete because Lake Formation still gates them.
 
+{{% notice warning %}}
+Every command in this chapter is destructive. Make sure you are on the correct AWS account and region (`ap-southeast-1`) before running anything.
+{{% /notice %}}
+
 ---
 
 ## 7.1 Stop CI/CD first

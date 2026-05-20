@@ -16,6 +16,10 @@ The pipeline ran, the analytics fired, the API answered. This chapter runs three
 
 `scripts/contract_test.py` is the regression test that runs on every CI/CD deploy. It checks the end-user-facing contracts that have broken in past iterations.
 
+{{% notice tip %}}
+This is the single most useful verification command in the workshop. If `All contracts passed.` prints, the pipeline is healthy end-to-end (API + dashboard + Athena catalog).
+{{% /notice %}}
+
 ```powershell
 $env:OTT_API_KEY = (aws ssm get-parameter --name /sdlf/ott/api-key/prod `
   --region ap-southeast-1 --query Parameter.Value --output text)

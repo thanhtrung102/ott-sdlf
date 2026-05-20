@@ -10,6 +10,10 @@ pre: <b>3. </b>
 
 The repo already has CI/CD set up — that's the recommended deploy path. You push to `main` and the `sdlf-ott-cicd` CodePipeline takes care of validating + deploying every CloudFormation stack in dependency order.
 
+{{% notice tip %}}
+**CI/CD is the recommended path** (section 3.2). The local PowerShell path (section 3.8) is only for first-time bootstrap before CI/CD exists, or for rapid iteration when you don't want to wait on a `git push`.
+{{% /notice %}}
+
 | Path | Use when |
 |---|---|
 | **A. CI/CD (`sdlf-ott-cicd` CodePipeline)** ✓ recommended | Every routine deploy. Push to `main`, walk away, watch CodePipeline. |
@@ -121,6 +125,10 @@ aws codepipeline get-pipeline-state --name sdlf-ott-cicd --region ap-southeast-1
 ## 3.5 Activate Lake Formation column-level RBAC
 
 The Lake Formation grants are declared in `pipeline-ott-lakeformation.yaml` but stay dormant until you revoke `IAM_ALLOWED_PRINCIPALS` on each protected table.
+
+{{% notice warning %}}
+Running this script immediately restricts access on `curated`, `raw_search_events`, `dq_results`, and `keyword_trends` to the 7 explicitly-granted principals. Any other role that previously read these tables via IAM will lose access.
+{{% /notice %}}
 
 ```powershell
 python D:\ott-sdlf\scripts\lf_grants.py --apply
