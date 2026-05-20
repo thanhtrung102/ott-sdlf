@@ -146,26 +146,37 @@ to trip them. They are an early-warning signal, not an outage: no DLQ has a
 message, and no `*-errors` alarm is firing. If they become chronic, raise the
 Lambda timeout or shard the work.
 
-### Finding 2 — Lake Formation column RBAC is defined but not enforced
+### Finding 2 — Lake Formation column RBAC enforcement
+
+If you completed [§5.3.5](../5.3-deploy/), `IAM_ALLOWED_PRINCIPALS` is revoked and the 7 `TableWithColumns` grants are live. Verify:
 
 ```powershell
-aws lakeformation list-permissions --region ap-southeast-1 `
-  --resource '{\"Table\":{\"CatalogId\":\"703668403514\",\"DatabaseName\":\"fpt_ott_searchevents_analytics\",\"Name\":\"curated\"}}' `
-  --query "PrincipalResourcePermissions[].Principal.DataLakePrincipalIdentifier" --output text
+python D:\ott-sdlf\scripts\verify_monitoring_and_lf.py
 ```
 
-**Expected** (live):
+**Expected** (live after activation):
 
 ```
-arn:aws:iam::...:role/sdlf-ott/sdlf-ott-cicd-codebuild    arn:aws:iam::...:user/terraform-admin    arn:aws:iam::...:user/terraform-admin    IAM_ALLOWED_PRINCIPALS
+=== LAKE FORMATION ===
+  OK L1 expected role grants present  (6/6)
+  OK L2 IAM_ALLOWED_PRINCIPALS revoked  (column-level RBAC is ACTIVELY ENFORCED)
+  OK L3 contentgap grant matches template  (excludes: ['search_session_id', 'subscription_count', 'user_id_hashed'])
+  OK L3 lutrefresh grant matches template  (excludes: ['has_premium', 'search_session_id', 'subscription_count', 'user_id_hashed'])
+  OK L3 trending grant matches template  (all columns)
+  OK L3 rDQExecu grant matches template  (all columns)
+  OK L3 rGlueDQRol grant matches template  (all columns)
+  OK L3 searchevents-glue-role grant matches template  (all columns)
 ```
 
-`IAM_ALLOWED_PRINCIPALS` is still granted `ALL` on `curated`. While that grant
-exists, the column exclusions declared in `pipeline-ott-lakeformation.yaml` are
-**dormant** — any IAM principal with Glue/Athena access reads every column. To
-activate column-level RBAC, revoke it (workshop [§5.3.5](../5.3-deploy/)). This is
-expected on a fresh reference deployment: the revoke is a deliberate, separate,
-irreversible step.
+Why this needs an imperative companion to the CFN stack: when `AWS::LakeFormation::PrincipalPermissions` declares a `TableWithColumns` grant while `IAM_ALLOWED_PRINCIPALS` is active on the same table, CloudFormation reports `CREATE_COMPLETE` but the underlying LF grant does not land — `ListPermissions(ResourceType=TABLE_WITH_COLUMNS)` returns 0. `activate_lakeformation.py` calls `lakeformation:GrantPermissions` directly to install the grants, then revokes `IAM_ALLOWED_PRINCIPALS`. After both steps run, all 7 grants become visible and enforcement is active.
+
+If you skip §5.3.5 on a fresh deployment, `verify_monitoring_and_lf.py` flags it:
+
+```
+  !! L2 IAM_ALLOWED_PRINCIPALS SELECT still granted  (column exclusions DEFINED but NOT ENFORCED — see activation command)
+```
+
+That state is *operationally fine* (Lambdas keep working via the bypass) but the column-level exclusions are inert. Don't try to revoke `IAM_ALLOWED_PRINCIPALS` without running the activate script first — you will lock the Lambdas out.
 
 ---
 

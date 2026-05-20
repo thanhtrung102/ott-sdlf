@@ -8,14 +8,14 @@ pre: " <b> 5.3 </b> "
 
 The repo already has CI/CD set up — that's the recommended deploy path. You push to `main` and the `sdlf-ott-cicd` CodePipeline takes care of validating + deploying every CloudFormation stack in dependency order.
 
-> 💡 **TIP:** CI/CD is the recommended path (section 5.3.2). The local PowerShell path (section 5.3.8) is only for first-time bootstrap before CI/CD exists, or for rapid iteration when you don't want to wait on a `git push`.
+> 💡 **TIP:** CI/CD is the recommended path (section 5.3.2). The local PowerShell path (section 5.3.9) is only for first-time bootstrap before CI/CD exists, or for rapid iteration when you don't want to wait on a `git push`.
 
 | Path | Use when |
 |---|---|
 | **A. CI/CD (`sdlf-ott-cicd` CodePipeline)** ✓ recommended | Every routine deploy. Push to `main`, walk away, watch CodePipeline. |
 | **B. Local PowerShell (`ott-pipeline.ps1`)** | First-time bootstrap before CI/CD exists, or rapid iteration when you don't want to wait on a git push. |
 
-This chapter walks path A. Path B is at section 5.3.8 for the bootstrap / iteration case.
+This chapter walks path A. Path B is at section 5.3.9 for the bootstrap / iteration case.
 
 ---
 
@@ -124,57 +124,83 @@ aws codepipeline get-pipeline-state --name sdlf-ott-cicd --region ap-southeast-1
 
 ## 5.3.5 Activate Lake Formation column-level RBAC
 
-`pipeline-ott-lakeformation.yaml` declares column-level grants on the `curated` table, but they stay **dormant** until the default `IAM_ALLOWED_PRINCIPALS` grant is revoked. Two steps.
+`pipeline-ott-lakeformation.yaml` declares 7 `AWS::LakeFormation::PrincipalPermissions` resources with `TableWithColumns` ColumnWildcards. CloudFormation will report all 7 as `CREATE_COMPLETE`, but **the underlying LF grants will not land** until `IAM_ALLOWED_PRINCIPALS` is revoked. CFN reports success because the resource creation API call succeeded; the column-level grant collapses to a no-op silently. Result: 0 `TABLE_WITH_COLUMNS` grants visible via `ListPermissions` after the deploy.
 
-**Step 1 — pre-grant the admin + CI/CD principals.** `lf_grants.py` grants `ALL` on every OTT table to `terraform-admin` and `sdlf-ott-cicd-codebuild`, so neither loses access after the revoke (and so the next CI/CD deploy doesn't fail with an LF permission error). It does *not* revoke anything — that's step 2.
+Activation is therefore a 2-script step that runs *after* `5.3.2`:
+
+**Step 1 — pre-grant admin + CI/CD principals.** `lf_grants.py` grants `ALL` on every OTT table to `terraform-admin` and `sdlf-ott-cicd-codebuild`, so neither loses access after the revoke. Idempotent.
 
 ```powershell
 python D:\ott-sdlf\scripts\lf_grants.py --apply
 ```
 
-**Expected output** (one line per table × principal; counts depend on how many catalog tables exist — 10 analytics + 2 gold = 24 grants today):
-
-```
-=== fpt_ott_searchevents_analytics (10 tables) ===
-  OK   ALL on curated -> terraform-admin
-  OK   ALL on curated -> sdlf-ott-cicd-codebuild
-  ... (one pair per table)
-=== fpt_ott_searchevents_gold (2 tables) ===
-  OK   ALL on keyword_trends -> terraform-admin
-  ... (one pair per table)
-
-Summary: granted=24 failed=0
-```
-
-**Step 2 — revoke `IAM_ALLOWED_PRINCIPALS` on `curated`.** The exact command, with the account ID and database already substituted, is published as the `oActivationCommand` output of the Lake Formation stack:
+**Step 2 — grant the 7 OTT pipeline roles imperatively + revoke `IAM_ALLOWED_PRINCIPALS`.** `activate_lakeformation.py` works around the CFN no-op by calling `lakeformation:GrantPermissions` directly for each ott-main\* role with the exact column exclusions declared in `pipeline-ott-lakeformation.yaml`, then revokes `IAM_ALLOWED_PRINCIPALS` to turn on enforcement.
 
 ```powershell
-aws cloudformation describe-stacks --stack-name sdlf-pipeline-ott-lakeformation `
-  --region ap-southeast-1 `
-  --query "Stacks[0].Outputs[?OutputKey=='oActivationCommand'].OutputValue" --output text
+python D:\ott-sdlf\scripts\activate_lakeformation.py            # dry-run, prints what it would do
+python D:\ott-sdlf\scripts\activate_lakeformation.py --apply    # commits
 ```
 
-It prints the revoke command — run what it gives you:
+**Expected output** (live 2026-05-20, `--apply` mode):
 
 ```
-aws lakeformation revoke-permissions --principal '{"DataLakePrincipalIdentifier":"IAM_ALLOWED_PRINCIPALS"}' --resource '{"Table":{"CatalogId":"<account>","DatabaseName":"fpt_ott_searchevents_analytics","Name":"curated"}}' --permissions SELECT --region ap-southeast-1
+Step 1: Grant ott-main* roles with column exclusions
+  OK      ContentGap    ->  excludes ['user_id_hashed', 'search_session_id', 'subscription_count']
+  OK      LutRefresh    ->  excludes ['user_id_hashed', 'search_session_id', 'has_premium', 'subscription_count']
+  OK      Trending      ->  all columns
+  OK      DQExec        ->  all columns
+  OK      DQGlue        ->  all columns
+Step 2: Grant Glue ETL role (SELECT/INSERT/ALTER, all columns)
+  OK      GlueETL      ->  SELECT all columns
+  OK      GlueETL      ->  INSERT (table-level)
+  OK      GlueETL      ->  ALTER (table-level)
+Step 3: Grant Crawler role (table-level ALTER/DESCRIBE/INSERT)
+  OK      Crawler      ->  ALTER+DESCRIBE+INSERT
+Step 4: Revoke IAM_ALLOWED_PRINCIPALS to activate enforcement
+  OK      IAM_ALLOWED_PRINCIPALS  ->  ALL  (revoked)
+
+=== Post-state verification ===
+  TableWithColumns grants now visible: 7
 ```
 
-> ⚠️ **WARNING:** Once revoked, only the principals explicitly granted in the Lake Formation stack can read `curated`. Any role that previously read it via plain IAM loses access.
+> ⚠️ **WARNING:** Once `IAM_ALLOWED_PRINCIPALS` is revoked, only principals explicitly granted in step 1 + step 2 can read `curated`. Any role outside that set loses access.
 
-**Verify enforcement** — `IAM_ALLOWED_PRINCIPALS` must be gone from `curated`:
+**Verify enforcement** — the empirical check, runs in <1 second:
 
 ```powershell
-aws lakeformation list-permissions --region ap-southeast-1 `
-  --resource '{\"Table\":{\"CatalogId\":\"<account>\",\"DatabaseName\":\"fpt_ott_searchevents_analytics\",\"Name\":\"curated\"}}' `
-  --query "PrincipalResourcePermissions[?Principal.DataLakePrincipalIdentifier=='IAM_ALLOWED_PRINCIPALS'] | length(@)" --output text
+python D:\ott-sdlf\scripts\verify_monitoring_and_lf.py
 ```
 
-**Expected**: `0`. If it returns `1`, step 2 didn't apply — re-run it. Chapter 5.7 §5.7.3 checks this on the reference deployment (where, by default, it has not yet been run).
+**Expected**: `L2 IAM_ALLOWED_PRINCIPALS revoked  (column-level RBAC is ACTIVELY ENFORCED)` and 6 × `L3 ... grant matches template` lines.
+
+> The CFN approach alone (without `activate_lakeformation.py`) leaves you in the worst of both worlds: `IAM_ALLOWED_PRINCIPALS` not revoked + 0 actual column grants. The Lambdas keep working only via the bypass — and pulling that bypass would lock every Lambda out. The activate script fixes both at once.
 
 ---
 
-## 5.3.6 Sanity-check what's deployed
+## 5.3.6 Subscribe to the alarm SNS topic
+
+The 17 CloudWatch alarms deployed by `pipeline-ott-monitoring.yaml` publish to the SNS topic at `/SDLF/SNS/ott/Notifications`. The topic exists, but a fresh deployment has **0 subscribers** — alarms will fire silently. Add an endpoint:
+
+```powershell
+$TOPIC = aws ssm get-parameter --name /SDLF/SNS/ott/Notifications --region ap-southeast-1 --query Parameter.Value --output text
+aws sns subscribe --topic-arn $TOPIC --protocol email `
+  --notification-endpoint your-email@example.com --region ap-southeast-1
+```
+
+You'll receive an AWS Notification email — click **Confirm subscription** in it. Until you do, the subscription stays in `PendingConfirmation` and alarm notifications are dropped.
+
+**Verify**:
+
+```powershell
+aws sns list-subscriptions-by-topic --topic-arn $TOPIC --region ap-southeast-1 `
+  --query "Subscriptions[?SubscriptionArn != 'PendingConfirmation'].[Protocol,Endpoint]" --output table
+```
+
+**Expected** — at least one confirmed row with your protocol + endpoint.
+
+---
+
+## 5.3.7 Sanity-check what's deployed
 
 ```powershell
 aws cloudformation list-stacks --region ap-southeast-1 `
@@ -207,7 +233,7 @@ sdlf-pipeline-ott-trending
 
 ---
 
-## 5.3.7 Read the live state — what the deploy gave you
+## 5.3.8 Read the live state — what the deploy gave you
 
 ```powershell
 # API base URL (you'll use it in chapter 5.5)
@@ -225,7 +251,7 @@ aws glue get-job --job-name sdlf-ott-searchevents-glue-job --region ap-southeast
 
 ---
 
-## 5.3.8 (Alternative) Deploy without CI/CD — local PowerShell
+## 5.3.9 (Alternative) Deploy without CI/CD — local PowerShell
 
 For first-time bootstrap (before CI/CD exists in the account) or rapid iteration when waiting on a git push isn't acceptable:
 
