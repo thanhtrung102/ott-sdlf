@@ -84,11 +84,15 @@ aws sqs get-queue-attributes --queue-url "$(aws sqs get-queue-url --queue-name s
 
 ---
 
-## 5.4.4 Stage B — Glue ETL (~25-33 min)
+## 5.4.4 Stage B — Glue ETL (~25-35 min)
 
-Stage B picks up the EventBridge event, starts the Glue job, waits for completion. Spark reads all dt partitions under SOURCE_LOCATION (not just the new one), so wall-clock depends on cumulative day count.
+Stage B picks up the EventBridge event, starts the Glue job, waits for completion. Spark reads all dt partitions under `SOURCE_LOCATION` (not just the new one), so wall-clock depends on cumulative day count. Across recent history this lands at 1159–2148 s (≈ 19–36 min).
 
-> ℹ️ **NOTE:** This is the longest step in the workshop. Walk away for ~25 minutes; the rest of the chapter can wait. The Glue job emits a `LINEAGE` log line when it finishes — that's the signal to come back.
+> ℹ️ **NOTE:** This is the longest step in the workshop. Walk away for ~30 minutes; the rest of the chapter can wait. The Glue job emits a `LINEAGE` log line when it finishes — that's the signal to come back.
+>
+> **Failure semantics (live as of 2026-05-20):** the Stage B state machine's Map state uses `ToleratedFailurePercentage: 0` — when the Glue job fails, Stage B fails. Earlier deployments had this at 100 (Map "succeeded" on Glue failures). This value is a hardcoded literal in the SDLF stage-glue module's SM definition (`sdlf-stage-glue/src/state-machine/stage-glue.asl.json`) — it is **not** exposed as a CFN parameter, so `pipeline-ott-mainB.yaml` cannot override it. If you see a `SUCCEEDED` Stage B with a `FAILED` Glue run, your deployment is on the broken version. Remediation: patch that file to `0`, **redeploy the SDLF framework** so it republishes the `stageglue` module, then redeploy `sdlf-pipeline-ott-mainB`. Redeploying `mainB` alone is not sufficient — it resolves the module from `{{resolve:ssm:/sdlf/stageglue/main}}`, which keeps serving the unpatched definition until the framework is redeployed.
+>
+> **Write semantics:** the Glue script sets `spark.sql.sources.partitionOverwriteMode = DYNAMIC` and defaults `PUSH_DOWN_PREDICATE` to `None` (full backfill when omitted). With the bookmark enabled, an incremental run only rewrites partitions touched by the new file. Earlier script revisions used static overwrite + a `today-2` predicate fallback, which silently wiped curated to 0 rows on Stage-B-triggered runs.
 
 ```powershell
 $smArn = "arn:aws:states:ap-southeast-1:$(aws sts get-caller-identity --query Account --output text):stateMachine:sdlf-ott-mainB-sm"
@@ -135,7 +139,7 @@ $ANALYTICS = aws ssm get-parameter --name /sdlf/storage/rAnalyticsBucket/prod --
 aws s3 ls "s3://$ANALYTICS/ott/searchevents/curated/" --region ap-southeast-1
 ```
 
-**Expected** — Hive partitions by `dt`:
+**Expected** — Hive partitions by `dt` (your set will include any re-ingestion partitions you've added; the reference deploy currently has 19):
 
 ```
                            PRE dt=2022-06-01/
@@ -143,13 +147,17 @@ aws s3 ls "s3://$ANALYTICS/ott/searchevents/curated/" --region ap-southeast-1
                            PRE dt=2022-06-03/
                            ...
                            PRE dt=2022-06-14/
-                           PRE dt=2022-06-15/
+                           PRE dt=2022-06-17/
+                           PRE dt=2022-06-18/
+                           PRE dt=2022-06-20/
+                           PRE dt=2022-06-21/
+                           PRE dt=2022-06-22/
 ```
 
 Drilling into one partition, you should see Hive sub-partitions by `derived_genre`:
 
 ```powershell
-aws s3 ls "s3://$ANALYTICS/ott/searchevents/curated/dt=2022-06-15/" --region ap-southeast-1
+aws s3 ls "s3://$ANALYTICS/ott/searchevents/curated/dt=2022-06-22/" --region ap-southeast-1
 ```
 
 **Expected**:
@@ -191,13 +199,13 @@ FROM fpt_ott_searchevents_analytics.dq_results
 GROUP BY outcome;
 ```
 
-**Expected** (live output, observed today — across all DQ runs to date):
+**Expected** (live, 2026-05-20 — cumulative across all DQ runs to date):
 
 ```
 outcome   rules
 --------- -----
-Passed    205
-Failed     25
+Passed    281
+Failed     41
 ```
 
 A `Failed` count > 0 is not a pipeline failure — the DQ SM passes when the score threshold is met. To see which rules failed:
@@ -212,15 +220,16 @@ ORDER BY occurrences DESC;
 
 > The `dq_results` table's metrics column is named `evaluated_metrics` (with underscore), not `evaluatedmetrics`. Trips up first-time queries.
 
-**Expected** (live output — top failing rules; numbers vary):
+**Expected** (live, 2026-05-20 — top failing rules; numbers vary):
 
 ```
 occurrences  rule
 -----------  ------------------------------------------------------------------------------
-          4  ColumnValues "subscription_count" <= 15
-          4  ColumnValues "derived_genre" in [...7-genre subset]
+          6  ColumnValues "derived_genre" in [...subset]
+          6  ColumnValues "subscription_count" <= 15
+          6  ColumnValues "subscription_count" in ["0","1","2",...,"15"]
+          6  ColumnValues "subscription_count" in ["0","1"] with threshold >= 0.93
           4  Uniqueness "event_id" > 0.85
-          1  Uniqueness "event_id" > 0.95
 ```
 
 > These failures are auto-recommended-ruleset drift — `subscription_count` bounds and the `derived_genre` enum were tuned on a small initial sample — plus a real cross-partition `event_id` duplication from re-ingesting the same source file into a new `dt`. None is a pipeline break.
@@ -236,25 +245,25 @@ GROUP BY derived_genre
 ORDER BY rows DESC;
 ```
 
-**Expected** (live — cumulative across all dt partitions, exact numbers will vary):
+**Expected** (live, 2026-05-20 — across 19 dt partitions in the reference deploy; exact numbers will vary with your partition set):
 
 ```
 derived_genre        rows
 ---------------- --------
-PHIM_VIET         371,721
+PHIM_VIET         371,723
 UNKNOWN           161,209
-PHIM_TRUNG        153,401
-ANIME             143,268
-PHIM_AU_MY         96,764
+PHIM_TRUNG        153,399
+ANIME             143,269
+PHIM_AU_MY         96,763
+EMPTY_QUERY        95,447
 PHIM_HAN           93,674
-EMPTY_QUERY        85,913
 NHAC               45,893
 TRUYEN_HINH        45,277
 THE_THAO           34,619
-TOTAL           1,231,739
+TOTAL           1,241,273
 ```
 
-10 genres, ~1.2M rows. A single Glue run outputs ~1.15M per the LINEAGE log; the rest is cumulative across re-triggers.
+10 genres, ~1.24M rows across 19 dt partitions (14 reference 20220601–20220614 + 20220617, 20220618, 20220620, 20220621, 20220622 added by re-ingestion tests). A single full-history Glue run outputs ~1.15M per the LINEAGE log.
 
 ---
 

@@ -23,29 +23,29 @@ $env:OTT_API_KEY = (aws ssm get-parameter --name /sdlf/ott/api-key/prod `
 python D:\ott-sdlf\scripts\contract_test.py
 ```
 
-**Expected** (live output, observed today):
+**Expected** (live output, captured 2026-05-20):
 
 ```
 === Contract: REST API ===
   [PASS] API rejects request without x-api-key (P0a auth)  (status=401)
   [PASS] API rejects wrong x-api-key (P0a auth)  (status=401)
   [PASS] API /content-gaps returns 3 rows  (got 3)
-  [PASS] API content_gaps top row has non-empty keyword  (top keyword='bat do')
+  [PASS] API content_gaps top row has non-empty keyword  (top keyword='nguyen l')
   [PASS] API /content-gaps?report=premium_vs_free returns 2 rows
-  [PASS] premium_vs_free top has numeric premium_share_pct  (pct=6.9)
+  [PASS] premium_vs_free top has numeric premium_share_pct  (pct=6.3)
   [PASS] API /trending returns 3 rows
-  [PASS] API exposes X-Data-Freshness header (P0b)  (X-Data-Freshness='2026-05-19T15:41:26+00:00')
-  [PASS] API exposes Last-Modified header (P0b)  (Last-Modified='Tue, 19 May 2026 15:41:26 +0000')
+  [PASS] API exposes X-Data-Freshness header (P0b)  (X-Data-Freshness='2026-05-20T09:11:24+00:00')
+  [PASS] API exposes Last-Modified header (P0b)  (Last-Modified='Wed, 20 May 2026 09:11:24 +0000')
   [PASS] trending top row is NOT EMPTY_QUERY (N1 regression)  (top kw='nữ thanh tra tài ba' genre=PHIM_VIET)
 
 === Contract: Dashboard HTML artifact + presigned URL ===
-  [PASS] CG dashboard date directory exists  (latest=analytics/content-gap/report/2022-06-18/)
-  [PASS] Dashboard report.html exists & non-trivial size  (size=60836)
+  [PASS] CG dashboard date directory exists  (latest=analytics/content-gap/report/2022-06-22/)
+  [PASS] Dashboard report.html exists & non-trivial size  (size=60322)
   [PASS] Dashboard URL: HTTP 200 + <html (L5 SigV4 regression)  (status=200 starts='<!DOCTYPE html>...')
 
 === Contract: Athena catalog ===
-  [PASS] Athena: derived_genre partition queryable (L3 regression)  (row=['PHIM_HAN', '6269'])
-  [PASS] Athena: dq_results queryable (L7 LF regression)  (row=['Failed', '25'])
+  [PASS] Athena: derived_genre partition queryable (L3 regression)  (row=['PHIM_HAN', '6270'])
+  [PASS] Athena: dq_results queryable (L7 LF regression)  (row=['Failed', '41'])
   [PASS] Athena: raw_search_events.action visible (L8 regression)  (row=['search'])
 
 All contracts passed.
@@ -63,27 +63,27 @@ This script runs a battery of Athena queries and renders ASCII charts so you can
 python D:\ott-sdlf\scripts\audit_visuals.py
 ```
 
-**Expected** (live, observed today — abbreviated to key sections):
+**Expected** (live 2026-05-20 — abbreviated to key sections; numbers are for the 19-partition reference deploy):
 
 ```
 ==============================================================================
 1. QUALITY GATES — row counts at each lifecycle stage
 ==============================================================================
 
-1a. Curated layer: total rows per genre across all 14 days
-  PHIM_VIET       371,721  ██████████████████████████████████████████████████
+1a. Curated layer: total rows per genre
+  PHIM_VIET       371,723  ██████████████████████████████████████████████████
   UNKNOWN         161,209  █████████████████████
-  PHIM_TRUNG      153,401  ████████████████████
-  ANIME           143,268  ███████████████████
-  PHIM_AU_MY       96,764  █████████████
+  PHIM_TRUNG      153,399  ████████████████████
+  ANIME           143,269  ███████████████████
+  PHIM_AU_MY       96,763  █████████████
+  EMPTY_QUERY      95,447  ████████████
   PHIM_HAN         93,674  ████████████
-  EMPTY_QUERY      85,913  ███████████
   NHAC             45,893  ██████
   TRUYEN_HINH      45,277  ██████
   THE_THAO         34,619  ████
 
 1b. Curated retention vs the published LINEAGE log
-  Curated rows: 1,231,739
+  Curated rows: 1,241,273
   LINEAGE log (latest Glue run): raw=1,298,470 -> output=1,145,826 (retention=0.882)
 
 ==============================================================================

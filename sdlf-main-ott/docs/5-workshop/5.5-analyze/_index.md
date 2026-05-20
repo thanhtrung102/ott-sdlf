@@ -38,20 +38,20 @@ aws lambda invoke --function-name sdlf-ott-mainTR-report --region ap-southeast-1
 Get-Content C:\tmp\trending-out.json
 ```
 
-**Expected** (sample JSON; rows will vary by reference date):
+**Expected** (live 2026-05-20 — rows vary with the latest dt partition you ingested):
 
 ```json
 {
-  "dt": "2022-06-18",
+  "dt": "2022-06-22",
   "mode": "fallback/volume-only",
   "reports": {
-    "trending_all": 1000,
-    "trending_unknown": 227,
-    "gold_rows": 13707
+    "trending_all": 545,
+    "trending_unknown": 25,
+    "gold_rows": 13546
   },
   "prefixes": {
-    "all": "s3://...-stage-prod/analytics/trending/all/2022-06-18/",
-    "unknown": "s3://...-stage-prod/analytics/trending/unknown/2022-06-18/"
+    "all": "s3://...-stage-prod/analytics/trending/all/2022-06-22/",
+    "unknown": "s3://...-stage-prod/analytics/trending/unknown/2022-06-22/"
   },
   "errors": 0
 }
@@ -67,11 +67,11 @@ SELECT COUNT(*) AS gold_rows,
 FROM fpt_ott_searchevents_gold.keyword_trends;
 ```
 
-**Expected** (exact numbers vary):
+**Expected** (live 2026-05-20 — exact numbers vary):
 
 ```
 gold_rows    unique_keywords
-13707        1691
+13546        1686
 ```
 
 ---
@@ -85,19 +85,19 @@ aws lambda invoke --function-name sdlf-ott-mainCG-report --region ap-southeast-1
 Get-Content C:\tmp\cg-out.json
 ```
 
-**Expected** (truncated):
+**Expected** (live 2026-05-20):
 
 ```json
 {
-  "dt": "2022-06-18",
+  "dt": "2022-06-22",
   "reports": {
-    "content_gaps": 487,
-    "premium_vs_free": 9,
-    "repeat_search_rate": 9,
+    "content_gaps": 500,
+    "premium_vs_free": 10,
+    "repeat_search_rate": 10,
     "hour_of_day_heatmap": 216,
     "guest_vs_auth_demand": 9
   },
-  "report_url": "https://...-stage-prod.s3.ap-southeast-1.amazonaws.com/analytics/content-gap/report/2022-06-18/report.html?X-Amz-Algorithm=...",
+  "report_url": "https://...-stage-prod.s3.ap-southeast-1.amazonaws.com/analytics/content-gap/report/2022-06-22/report.html?X-Amz-Algorithm=...",
   "errors": 0
 }
 ```
@@ -124,18 +124,18 @@ The LUT refresh takes ~10-15 minutes (depends on how many UNKNOWN keywords need 
 aws logs tail /aws/lambda/sdlf-ott-mainLUT-refresh --since 5m --follow --region ap-southeast-1
 ```
 
-**Expected log lines** (sample):
+**Expected log lines** (sample; numbers grow with each run — current LUT has 125k+ entries as of 2026-05-20):
 
 ```
-2026-05-20T... INFO Loaded existing LUT: 117954 entries
+2026-05-20T... INFO Loaded existing LUT: 122665 entries
 2026-05-20T... INFO Fetched 20000 UNKNOWN keywords from Athena
 2026-05-20T... INFO Bedrock batch 1/200 classified — added 47 PHIM_VIET, 23 ANIME, 12 PHIM_TRUNG ...
 ...
 2026-05-20T... INFO Uploaded refreshed classifier to s3://...-artifacts-prod/ott/searchevents/genre_classifier_pkg.zip
-2026-05-20T... INFO LUT refresh complete. Added 4823 new entries (new total: 122777).
+2026-05-20T... INFO LUT refresh complete. Added 4823 new entries (new total: 127488).
 ```
 
-The next Glue ETL run will automatically pick up the refreshed classifier.
+> The LUT-Refresh Lambda writes to the SDLF artifacts bucket. The Glue job reads from the **project-specific bucket** (`ott-search-${ACCT}-prod/ott/searchevents/`). To make the refreshed classifier reach the next Glue run, copy the artifact across (or wire a CICD step). See [§5.2.5](../5.2-prerequisites/#525-the-genre-classifier-zip-and-glue-script) for why these are two buckets.
 
 ---
 
@@ -149,16 +149,16 @@ $KEY = aws ssm get-parameter --name /sdlf/ott/api-key/prod --region ap-southeast
 Invoke-RestMethod -Uri "$API/trending?limit=5" -Headers @{"x-api-key" = $KEY}
 ```
 
-**Expected** (live — exact keywords/counts vary by reference date; diacritics preserved end-to-end):
+**Expected** (live 2026-05-20 — counts vary with the latest dt; diacritics preserved end-to-end):
 
 ```
 keyword_norm                                       derived_genre   current_cnt
 -------------------------------------------------- --------------  -----------
-nữ thanh tra tài ba                                PHIM_VIET       4831
-liên minh công lý: phiên bản của zack snyder       PHIM_AU_MY      2923
-sao băng                                           PHIM_HAN        2389
-fairy tail                                         ANIME           2313
-giữa thanh xuân                                    PHIM_VIET       2147
+nữ thanh tra tài ba                                PHIM_VIET       470
+sao băng                                           PHIM_HAN        459
+liên minh công lý: phiên bản của zack snyder       PHIM_AU_MY      417
+fairy tail                                         ANIME           334
+giữa thanh xuân                                    PHIM_VIET       230
 ```
 
 **Verify the freshness header**:
@@ -170,11 +170,11 @@ $r.Headers.'Last-Modified'
 $r.Headers.'Cache-Control'
 ```
 
-**Expected**:
+**Expected** (live 2026-05-20 — your timestamp will be from the latest Trending Lambda invocation):
 
 ```
-2026-05-19T15:41:26+00:00
-Tue, 19 May 2026 15:41:26 +0000
+2026-05-20T09:11:24+00:00
+Wed, 20 May 2026 09:11:24 +0000
 public, max-age=300
 ```
 
@@ -206,21 +206,21 @@ foreach ($r in @("content_gaps","premium_vs_free","repeat_search_rate","hour_of_
 }
 ```
 
-**Expected** (live — top 2 of `premium_vs_free`):
+**Expected** (live 2026-05-20 — top 2 of `premium_vs_free`):
 
 ```
 === premium_vs_free (top 2) ===
 derived_genre     : PHIM_AU_MY
-total_searches    : 107903
-premium_searches  : 7441
-free_searches     : 100462
-premium_share_pct : 6.9
+total_searches    : 96763
+premium_searches  : 6120
+free_searches     : 90643
+premium_share_pct : 6.3
 
 derived_genre     : EMPTY_QUERY
-total_searches    : 85913
-premium_searches  : 3955
-free_searches     : 81958
-premium_share_pct : 4.6
+total_searches    : 95447
+premium_searches  : 4227
+free_searches     : 91220
+premium_share_pct : 4.4
 ```
 
 ---

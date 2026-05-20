@@ -29,7 +29,7 @@ firing) — it is not a script failure.
 python D:\ott-sdlf\scripts\verify_live.py
 ```
 
-**Expected output** (live, 2026-05-20):
+**Expected output** (live, captured 2026-05-20 after the in-place bug fixes from §5.4.4):
 
 ```
 OTT SDLF pipeline — live verification
@@ -53,7 +53,7 @@ account=703668403514  region=ap-southeast-1
 
 === Glue ETL job + catalog ===
   [PASS] Glue job sdlf-ott-searchevents-glue-job  (Glue 4.0, 10xG.1X)
-  [PASS] Glue job last run  (SUCCEEDED, 2020s)
+  [PASS] Glue job last run  (SUCCEEDED, 1772s)
   [PASS] Glue database fpt_ott_searchevents_analytics
   [PASS] Glue database fpt_ott_searchevents_gold
   [PASS] fpt_ott_searchevents_analytics: 10 expected tables  (10/10)
@@ -73,7 +73,7 @@ account=703668403514  region=ap-southeast-1
 
 === SQS — 5 dead-letter queues ===
   [PASS] sdlf-ott-mainA-dlq.fifo  (depth=0)
-  [PASS] sdlf-ott-mainB-dlq.fifo  (depth=0)
+  [WARN] sdlf-ott-mainB-dlq.fifo  (depth=1)
   [PASS] sdlf-ott-mainCG-dlq  (depth=0)
   [PASS] sdlf-ott-mainLUT-dlq  (depth=0)
   [PASS] sdlf-ott-mainTR-dlq  (depth=0)
@@ -81,11 +81,11 @@ account=703668403514  region=ap-southeast-1
 === CloudWatch — dashboard + alarms ===
   [PASS] dashboard sdlf-ott-searchevents-pipeline
   [PASS] sdlf-ott alarms deployed  (17 alarms)
-  [WARN] alarms currently in ALARM state  (sdlf-ott-mainCG-report-near-timeout, sdlf-ott-mainLUT-refresh-near-timeout)
+  [WARN] alarms currently in ALARM state  (sdlf-ott-mainB-dlq-not-empty, sdlf-ott-mainCG-report-near-timeout, sdlf-ott-mainLUT-refresh-near-timeout)
 
 === HTTP API — endpoints + auth + freshness ===
   [PASS] GET /trending (authorised)  (HTTP 200, 3 rows)
-  [PASS] X-Data-Freshness header present  (2026-05-19T15:41:26+00:00)
+  [PASS] X-Data-Freshness header present  (2026-05-20T09:11:24+00:00)
   [PASS] GET /trending without key rejected  (HTTP 401)
   [PASS] GET /content-gaps (authorised)  (HTTP 200, 2 rows)
 
@@ -93,10 +93,10 @@ account=703668403514  region=ap-southeast-1
   [WARN] curated table — IAM_ALLOWED_PRINCIPALS still granted  (column exclusions DEFINED but NOT ENFORCED — revoke to activate)
 
 === Summary ===
-  PASS=37  WARN=2  FAIL=0
+  PASS=36  WARN=3  FAIL=0
 ```
 
-`FAIL=0` is the success criterion. The two `WARN`s are explained in section 5.7.3.
+`FAIL=0` is the success criterion. The 3 `WARN`s are explained in section 5.7.3 — the Stage B DLQ depth=1 is a single stuck message from a prior Stage B failed execution (and the `sdlf-ott-mainB-dlq-not-empty` alarm it trips); the two `*-near-timeout` alarms are early-warning signals, not outages; and the Lake Formation column RBAC is defined but dormant until `IAM_ALLOWED_PRINCIPALS` is revoked. If the post-Trending Gold DQ happens to be mid-execution when you run this, `mainGoldDQ-sm` shows a transient 4th `WARN` (`RUNNING`) that clears on its own.
 
 ---
 
@@ -106,7 +106,7 @@ account=703668403514  region=ap-southeast-1
 |---|---|---|---|
 | 1 | CI/CD auto-deploy | `sdlf-ott-cicd` CodePipeline | Latest execution `Succeeded` |
 | 2 | Infrastructure-as-code | 11 OTT CloudFormation stacks | All `*_COMPLETE` |
-| 3 | ETL enrichment | Glue 4.0 job, 10×G.1X | Last run `SUCCEEDED` in 2020 s |
+| 3 | ETL enrichment | Glue 4.0 job, 10×G.1X | Last run `SUCCEEDED` in 1772 s |
 | 4 | Data catalog | 2 Glue DBs, 10 analytics + `keyword_trends` gold tables | All present |
 | 5 | Orchestration | 4 Step Functions (`mainA/B/DQ/GoldDQ`) | All last executions `SUCCEEDED` |
 | 6 | Analytics compute | 4 Lambdas (`mainTR/mainCG/mainLUT/api`) | All deployed, Python 3.12 |
@@ -123,20 +123,20 @@ framework), 5 DLQs, 17 alarms, 1 HTTP API.
 
 ## 5.7.3 Two live findings worth knowing
 
-`verify_live.py` reports two `WARN`s. Both are accurate live states, not bugs in
-the script — and both are reproducible.
+`verify_live.py` reports several `WARN`s. All are accurate live states, not bugs in
+the script.
 
-### Finding 1 — two near-timeout alarms are firing
+### Finding 1 — near-timeout alarms are firing
 
 ```powershell
 aws cloudwatch describe-alarms --alarm-name-prefix sdlf-ott --region ap-southeast-1 `
   --query "MetricAlarms[?StateValue=='ALARM'].AlarmName" --output text
 ```
 
-**Expected**:
+**Expected** (live 2026-05-20 — may also include `sdlf-ott-mainB-dlq-not-empty` if a Stage B execution recently FAILED and left a DLQ message):
 
 ```
-sdlf-ott-mainCG-report-near-timeout    sdlf-ott-mainLUT-refresh-near-timeout
+sdlf-ott-mainB-dlq-not-empty    sdlf-ott-mainCG-report-near-timeout    sdlf-ott-mainLUT-refresh-near-timeout
 ```
 
 These are *near-timeout* alarms — they fire when a Lambda's p90 duration crosses
@@ -173,7 +173,7 @@ irreversible step.
 
 `scripts/audit_visuals.py` runs the end-consumer Athena queries and renders them
 as terminal charts. This is the demo: the actual business value drawn from
-1.23 M curated search events.
+~1.24 M curated search events (live as of 2026-05-20).
 
 ```powershell
 python D:\ott-sdlf\scripts\audit_visuals.py
@@ -182,20 +182,19 @@ python D:\ott-sdlf\scripts\audit_visuals.py
 ### Insight 1 — Vietnamese content dominates demand
 
 ```
-PHIM_VIET       371,721  ██████████████████████████████████████████████████
+PHIM_VIET       371,723  ██████████████████████████████████████████████████
 UNKNOWN         161,209  █████████████████████
-PHIM_TRUNG      153,401  ████████████████████
-ANIME           143,268  ███████████████████
-PHIM_AU_MY       96,764  █████████████
+PHIM_TRUNG      153,399  ████████████████████
+ANIME           143,269  ███████████████████
+PHIM_AU_MY       96,763  █████████████
+EMPTY_QUERY      95,447  ████████████
 PHIM_HAN         93,674  ████████████
-EMPTY_QUERY      85,913  ███████████
 NHAC             45,893  ██████
 TRUYEN_HINH      45,277  ██████
 THE_THAO         34,619  ████
 ```
 
-PHIM_VIET (Vietnamese film) is **30.2 %** of all classified searches — the single
-largest genre. Content acquisition should weight local titles accordingly.
+PHIM_VIET (Vietnamese film) is **32.3 %** of classified searches (excluding `EMPTY_QUERY` rows) — the single largest genre. Content acquisition should weight local titles accordingly.
 
 ### Insight 2 — top trending titles (14-day window)
 
@@ -215,11 +214,12 @@ HTTP API exposes the same ranking at `GET /trending`.
 
 ```
 derived_genre  total   premium_pct
-PHIM_AU_MY     96,764   6.3
-THE_THAO       34,619   3.3
-NHAC           45,893   2.3
+PHIM_AU_MY     96,763   6.3
+THE_THAO       34,619   3.6
+NHAC           45,893   2.8
+TRUYEN_HINH    55,795   2.1
 ...
-ANIME         143,268   1.3
+ANIME         143,269   1.4
 ```
 
 Western content (PHIM_AU_MY) has the highest premium-subscriber share at
@@ -228,11 +228,11 @@ Western content (PHIM_AU_MY) has the highest premium-subscriber share at
 ### Insight 4 — search peaks at 3 AM Vietnam time
 
 ```
- 2      92,809  ██████████████████████████████████████
- 3      96,560  ████████████████████████████████████████   <- peak
- 4      88,037  ████████████████████████████████████
+ 2     105,835  █████████████████████████████████████
+ 3     113,303  ████████████████████████████████████████   <- peak
+ 4     105,471  █████████████████████████████████████
 ...
-11       5,771  ██                                          <- trough
+11       6,908  ██                                          <- trough
 ```
 
 Demand peaks 02:00–04:00 VN and bottoms out late morning — relevant for
@@ -242,12 +242,12 @@ cache-warming and batch-job scheduling.
 
 ```
 derived_genre  total   abandoned  abandon_pct
-ANIME          143268  16676      11.6
-THE_THAO        34619   3594      10.4
-PHIM_VIET      371721  36748       9.9
+ANIME          143269  20399      11.1
+THE_THAO        40201   4044      10.1
+PHIM_VIET      371723  44857       9.6
 ```
 
-ANIME has the highest abandon rate (**11.6 %**) — users search, find nothing,
+ANIME has the highest abandon rate (**11.1 %**) — users search, find nothing,
 quit. The `content_gaps` report drills this down to specific abandoned keywords.
 
 ### Insight summary

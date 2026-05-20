@@ -125,33 +125,52 @@ If any value is empty, the corresponding foundation stack didn't deploy or didn'
 
 ---
 
-## 5.2.5 The genre-classifier zip in the artifacts bucket
+## 5.2.5 The genre-classifier zip and Glue script
 
-The Glue ETL job loads a Python zip from the artifacts bucket at `ott/searchevents/genre_classifier_pkg.zip`. The Glue script has a baked-in fallback so a missing zip doesn't *crash* the job, but classifier quality degrades to a regex-only 8-genre fallback.
+The Glue ETL job loads its `.py` script and a Python `--extra-py-files` zip from a project-specific bucket — `ott-search-${AWS::AccountId}-prod` — separate from the SDLF artifacts bucket. (This split exists because the Glue execution role's S3 GetObject permission is scoped to that bucket and to the team/dataset prefix of the SDLF artifacts bucket; the script + zip live at `ott/searchevents/` directly in the project bucket. Aligning everything onto the SDLF artifacts bucket would require an IAM-policy + bucket-policy change. See workshop bug log for context.)
 
-**Upload the initial zip** (one-time bootstrap):
+Both files must exist at the exact paths shown below or the Glue job fails with `LAUNCH ERROR | Error downloading from S3 ... key does not exist (404)`.
+
+**Bootstrap both files** (one-time):
 
 ```powershell
+$REGION = "ap-southeast-1"
+$ACCT   = aws sts get-caller-identity --query Account --output text
+$GLUEBK = "ott-search-$ACCT-prod"
+
+aws s3 cp "D:\ott-sdlf\sdlf-main-ott\glue\ott-search-glue-job.py" `
+  "s3://$GLUEBK/ott/searchevents/ott-search-glue-job.py" --region $REGION
+
 aws s3 cp "D:\ott-sdlf\genre_classifier_pkg.zip" `
-  "s3://$(aws ssm get-parameter --name /sdlf/storage/rArtifactsBucket/prod --query Parameter.Value --output text)/ott/searchevents/genre_classifier_pkg.zip" `
-  --region ap-southeast-1
+  "s3://$GLUEBK/ott/searchevents/genre_classifier_pkg.zip" --region $REGION
 ```
+
+> The LUT-Refresh Lambda also writes the refreshed classifier to the SDLF artifacts bucket (`/sdlf/storage/rArtifactsBucket/prod`) after each successful classification batch. The Glue job does **not** read that copy — it always reads from `ott-search-${ACCT}-prod`. If you replace the classifier manually, copy it to the Glue path above.
 
 **Verify**:
 
 ```powershell
-aws s3api head-object --bucket "$(aws ssm get-parameter --name /sdlf/storage/rArtifactsBucket/prod --query Parameter.Value --output text)" `
+$ACCT   = aws sts get-caller-identity --query Account --output text
+aws s3api head-object --bucket "ott-search-$ACCT-prod" `
   --key ott/searchevents/genre_classifier_pkg.zip --region ap-southeast-1 `
+  --query "{Size:ContentLength, Modified:LastModified}" --output table
+aws s3api head-object --bucket "ott-search-$ACCT-prod" `
+  --key ott/searchevents/ott-search-glue-job.py --region ap-southeast-1 `
   --query "{Size:ContentLength, Modified:LastModified}" --output table
 ```
 
-**Expected** (live, observed today — 944 KB for the current LUT version):
+**Expected** (live, captured 2026-05-20):
 
 ```
 ---------------------------------------
 | Size      | Modified                |
 |-----------|-------------------------|
-| 944698    | 2026-05-19T15:00:10+00 |
+| 944698    | 2026-05-20T07:16:29+00 |
+---------------------------------------
+---------------------------------------
+| Size      | Modified                |
+|-----------|-------------------------|
+| 17067     | 2026-05-20T08:13:51+00 |
 ---------------------------------------
 ```
 
