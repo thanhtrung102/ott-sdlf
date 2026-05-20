@@ -118,6 +118,9 @@ aws codepipeline get-pipeline-state --name sdlf-ott-cicd --region ap-southeast-1
 ---------------------------------
 ```
 
+> 📷 **Screenshot —** CodePipeline console: `sdlf-ott-cicd` with all four stages (Source · Validate · Deploy · Notify) green.
+> *Placeholder: capture and save as `01-pipeline-green.png` in this chapter folder, then replace this block with `![CodePipeline all stages green](01-pipeline-green.png)`.*
+
 ---
 
 ## 3.5 Activate Lake Formation column-level RBAC

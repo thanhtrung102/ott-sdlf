@@ -106,6 +106,9 @@ Get-Content C:\tmp\cg-out.json
 
 **Open the dashboard URL** from `report_url` — that's a 7-day presigned link to an HTML report with all 5 tables rendered.
 
+> 📷 **Screenshot —** the content-gap HTML report open in a browser: KPI tiles across the top, the five report tables (content gaps, premium-vs-free, repeat-search, hourly heatmap, guest-vs-auth) below.
+> *Placeholder: capture and save as `01-content-gap-report.png` in this chapter folder, then replace this block with `![Content-gap HTML report](01-content-gap-report.png)`.*
+
 ---
 
 ## 5.4 LUT-Refresh Lambda — Bedrock classification

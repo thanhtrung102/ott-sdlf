@@ -108,6 +108,9 @@ aws glue get-job-runs --job-name sdlf-ott-searchevents-glue-job --region ap-sout
 
 **Expected progression**: `STARTING` → `RUNNING` (~20-25 min) → `SUCCEEDED`.
 
+> 📷 **Screenshot —** Glue console: the `sdlf-ott-searchevents-glue-job` run page showing run state `SUCCEEDED` with the elapsed time.
+> *Placeholder: capture and save as `01-glue-job-succeeded.png` in this chapter folder, then replace this block with `![Glue job run succeeded](01-glue-job-succeeded.png)`.*
+
 When the Glue job finishes, look for the LINEAGE log line:
 
 ```powershell

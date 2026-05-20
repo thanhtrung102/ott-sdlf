@@ -146,6 +146,9 @@ Wrote D:\ott-sdlf\dashboard\index.html  (11,704 bytes)
 
 The dashboard shows KPIs, a platform bar chart, a genre donut, a top-20 keyword table, and a platform-abandon horizontal bar — all from the current `keyword_trends` gold table.
 
+> 📷 **Screenshot —** `dashboard/index.html` open in a browser: KPI tiles, platform bar chart, genre donut, and the top-20 keyword table.
+> *Placeholder: capture and save as `01-static-dashboard.png` in this chapter folder, then replace this block with `![Static gold-table dashboard](01-static-dashboard.png)`.*
+
 ### Path B: the daily content-gap HTML report (Lambda-generated)
 
 The Content-Gap Lambda writes an HTML report with all 5 report tables embedded, every time it runs. Stored in the stage bucket; accessed via 7-day presigned URL.
@@ -177,6 +180,9 @@ Start-Process "https://ap-southeast-1.console.aws.amazon.com/cloudwatch/home?reg
 - Glue job elapsed time + bytes read
 - Per-Lambda Invocations / Errors / Duration (LUT-Refresh, Content Gap, Trending)
 - Gold DQ SM executions
+
+> 📷 **Screenshot —** CloudWatch console: the `sdlf-ott-searchevents-pipeline` dashboard with all widgets populated.
+> *Placeholder: capture and save as `02-cloudwatch-dashboard.png` in this chapter folder, then replace this block with `![CloudWatch pipeline dashboard](02-cloudwatch-dashboard.png)`.*
 
 ```powershell
 aws cloudwatch describe-alarms --alarm-name-prefix sdlf-ott `
