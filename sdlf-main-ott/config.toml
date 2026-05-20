@@ -21,7 +21,7 @@ home = [ "HTML", "RSS", "JSON"]
 [Languages.en]
 title = "OTT Search Analytics Pipeline"
 weight = 1
-languageName = "English"
+label = "English"
 
 [markup]
   [markup.goldmark]
