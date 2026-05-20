@@ -36,6 +36,5 @@ Resources:
             "--job-bookmark-option": "job-bookmark-enable",
             "--enable-metrics": "",
             "--SOURCE_LOCATION": "s3://{{resolve:ssm:/sdlf/storage/rRawBucket/prod}}/ott/searchevents/",
-            "--OUTPUT_LOCATION": "s3://{{resolve:ssm:/sdlf/storage/rAnalyticsBucket/prod}}/ott/searchevents/curated/",
-            "--PUSH_DOWN_PREDICATE": "all"
+            "--OUTPUT_LOCATION": "s3://{{resolve:ssm:/sdlf/storage/rAnalyticsBucket/prod}}/ott/searchevents/curated/"
           }

@@ -99,10 +99,46 @@ try:
         normalize_network_type as _norm_nt,
     )
 except ImportError:
-    logger.warning("genre_classifier not found — all genres will be UNKNOWN")
-    def _classify_kw(kw): return "UNKNOWN"
-    def _bucket_platform(p): return "Other"
-    def _norm_nt(n): return "unknown"
+    # Baked-in degraded-mode fallback so a missing/corrupt classifier zip
+    # doesn't reduce all output to UNKNOWN. Covers the top high-confidence
+    # Vietnamese OTT genre signals only — the full LUT (~118k entries) lives
+    # in genre_classifier_pkg.zip, refreshed by the LUT Refresh Lambda.
+    logger.error("genre_classifier zip missing — falling back to baked-in mini-LUT")
+
+    _FALLBACK_PLATFORM = {
+        "android": "Mobile", "androidtv": "TV", "ios": "Mobile",
+        "iphone": "Mobile", "ipad": "Mobile", "smarttv": "TV",
+        "samsung": "TV", "lg": "TV", "web": "Web", "browser": "Web",
+    }
+    _FALLBACK_NETWORK = {"wifi": "wifi", "4g": "mobile", "5g": "mobile", "3g": "mobile"}
+    _FALLBACK_GENRE_REGEX = [
+        (_re.compile(r"\b(anime|manga|naruto|one[\s-]?piece|doraemon|conan)\b", _re.I), "ANIME"),
+        (_re.compile(r"\b(bong[\s-]?da|world[\s-]?cup|premier[\s-]?league|champions[\s-]?league|the[\s-]?thao|euro)\b", _re.I), "THE_THAO"),
+        (_re.compile(r"\b(nhac|music|mv|karaoke|sing|son[\s-]?tung)\b", _re.I), "NHAC"),
+        (_re.compile(r"\b(phim[\s-]?(viet|vn|vietnam))\b", _re.I), "PHIM_VIET"),
+        (_re.compile(r"\b(phim[\s-]?(han|korea|kbs|sbs))\b", _re.I), "PHIM_HAN"),
+        (_re.compile(r"\b(phim[\s-]?(trung|tq|hoa|china))\b", _re.I), "PHIM_TRUNG"),
+        (_re.compile(r"\b(phim[\s-]?(my|au[\s-]?my|hollywood))\b", _re.I), "PHIM_AU_MY"),
+        (_re.compile(r"\b(vtv|htv|vtc|truyen[\s-]?hinh)\b", _re.I), "TRUYEN_HINH"),
+    ]
+
+    def _classify_kw(kw):
+        if not kw:
+            return "EMPTY_QUERY"
+        for rx, label in _FALLBACK_GENRE_REGEX:
+            if rx.search(kw):
+                return label
+        return "UNKNOWN"
+
+    def _bucket_platform(p):
+        if not p:
+            return "Other"
+        return _FALLBACK_PLATFORM.get(p.lower(), "Other")
+
+    def _norm_nt(n):
+        if not n:
+            return "unknown"
+        return _FALLBACK_NETWORK.get(n.lower(), "unknown")
 
 classify_keyword_udf     = udf(_classify_kw, StringType())
 bucket_platform_udf      = udf(_bucket_platform, StringType())
@@ -206,6 +242,9 @@ def run() -> None:
             F.to_date(F.lit(_PUSH_DOWN_PREDICATE.replace("dt >= ", "")), "yyyy-MM-dd")
         )
 
+    # Lineage counter: rows read from raw.
+    _raw_rows = df.count()
+
     # ── Steps 1-2: Datetime clean + parse ────────────────────────────────────
     df = (
         df
@@ -215,9 +254,11 @@ def run() -> None:
 
     # ── Step 3: Drop corrupt year 0004 ───────────────────────────────────────
     df = df.filter(year(col("event_ts")) >= 2015)
+    _post_year_rows = df.count()
 
     # Deduplicate on event_id — guards against double-writes from Glue job retries.
     df = df.dropDuplicates(["eventid"])
+    _post_dedup_rows = df.count()
 
     # ── Step 4: Vietnam timezone hour ────────────────────────────────────────
     df = df.withColumn(
@@ -344,17 +385,31 @@ def run() -> None:
         col("dt_norm").alias("dt"),
     )
 
+    # Shuffle so each (dt, derived_genre) group lands on a single task —
+    # eliminates the small-file fan-out from 10 workers × ~50 Hive partitions
+    # that would otherwise produce hundreds of tiny Parquet files.
+    out = out.repartition(col("dt"), col("derived_genre"))
+
     logger.warning("Writing curated layer to %s", OUTPUT)
     (
         out.write
         .mode("overwrite")
         .option("compression", "snappy")
-        .partitionBy("dt")
+        .partitionBy("dt", "derived_genre")
         .parquet(OUTPUT)
     )
 
-    count = out.count()
-    logger.warning("Curated rows written: %d", count)
+    _output_rows = out.count()
+    # Structured single-line lineage marker — greppable in CloudWatch Logs Insights.
+    # Retention <0.7 across raw->output should page someone: implies a regression
+    # in the year filter, dedup logic, or input source.
+    _ratio = _output_rows / _raw_rows if _raw_rows else 0
+    logger.warning(
+        "LINEAGE run_id=%s raw=%d post_year=%d post_dedup=%d output=%d retention=%.3f",
+        _PIPELINE_RUN_ID, _raw_rows, _post_year_rows, _post_dedup_rows, _output_rows, _ratio,
+    )
+    if _ratio < 0.7:
+        logger.error("LINEAGE_ALARM retention %.3f below 0.7 threshold", _ratio)
 
 
 run()

@@ -66,7 +66,8 @@ Resources:
                   - s3:PutObject
                   - s3:DeleteObject
                 Resource:
-                  - !Sub arn:${AWS::Partition}:s3:::${pArtifactsBucket}/artifacts/*
+                  # Glue script + classifier zip live at ott/searchevents/, not the legacy artifacts/ prefix.
+                  - !Sub arn:${AWS::Partition}:s3:::${pArtifactsBucket}/${pTeamName}/${pDatasetName}/*
                   - !Sub arn:${AWS::Partition}:s3:::${pRawBucket}/${pTeamName}/${pDatasetName}/*
                   - !Sub arn:${AWS::Partition}:s3:::${pStageBucket}/${pTeamName}/${pDatasetName}/*
                   - !Sub arn:${AWS::Partition}:s3:::${pAnalyticsBucket}/${pTeamName}/${pDatasetName}/*
@@ -108,13 +109,13 @@ Resources:
       Command:
         Name: glueetl
         PythonVersion: "3"
-        ScriptLocation: !Sub s3://${pArtifactsBucket}/artifacts/ott-search-glue-job.py
+        ScriptLocation: !Sub s3://${pArtifactsBucket}/ott/searchevents/ott-search-glue-job.py
       DefaultArguments:
         "--job-bookmark-option": "job-bookmark-enable"
         "--enable-metrics": ""
         "--enable-continuous-cloudwatch-log": "true"
         "--enable-continuous-log-filter": "true"
-        "--extra-py-files": !Sub "s3://${pArtifactsBucket}/artifacts/genre_classifier_pkg.zip"
+        "--extra-py-files": !Sub "s3://${pArtifactsBucket}/ott/searchevents/genre_classifier_pkg.zip"
       ExecutionProperty:
         MaxConcurrentRuns: 1
       MaxRetries: 1
@@ -132,14 +133,22 @@ Resources:
       DatabaseName: !Ref pGlueDatabaseName
       TableInput:
         Name: raw_search_events
-        Description: Raw OTT search event Parquet files — schema contract for upstream change detection
+        Description: >-
+          Raw OTT search event Parquet files. Partition `dt` is YYYYMMDD on
+          disk (no dashes), matching the upstream ingest's bare directory layout.
+          KMS-locked from analyst roles; only the Glue ETL role + LF data-access
+          role can read this table. Curated downstream uses YYYY-MM-dd — the
+          Glue script normalizes between formats; no analyst should need to join
+          raw + curated directly.
         TableType: EXTERNAL_TABLE
         Parameters:
           classification: parquet
           projection.enabled: "true"
           projection.dt.type: date
           projection.dt.format: yyyyMMdd
-          projection.dt.range: "20220101,NOW+1YEARS"
+          # Bounded to active data window (June 2022 + July headroom for incoming ingest).
+          # Wider ranges waste Athena's projection arithmetic on every query.
+          projection.dt.range: "20220601,20220901"
           projection.dt.interval: "1"
           projection.dt.interval.unit: DAYS
           storage.location.template: !Sub s3://${pRawBucket}/${pTeamName}/${pDatasetName}/${!dt}/
@@ -157,6 +166,8 @@ Resources:
             - Name: keyword
               Type: string
             - Name: category
+              Type: string
+            - Name: action
               Type: string
             - Name: platform
               Type: string
@@ -179,17 +190,23 @@ Resources:
       DatabaseName: !Ref pGlueDatabaseName
       TableInput:
         Name: curated
-        Description: Curated OTT search events — 19-column enriched Parquet, partitioned by dt (yyyy-MM-dd)
+        Description: >-
+          Curated OTT search events — 17-column enriched Parquet, partitioned by
+          (dt, derived_genre) — derived_genre is path-partitioned by the Glue
+          write. Partition `dt` is ISO YYYY-MM-dd (different from raw's
+          YYYYMMDD). This is the canonical analyst-facing layer; raw is KMS-locked.
         TableType: EXTERNAL_TABLE
         Parameters:
           classification: parquet
           projection.enabled: "true"
           projection.dt.type: date
           projection.dt.format: yyyy-MM-dd
-          projection.dt.range: "2022-01-01,NOW+1YEARS"
+          projection.dt.range: "2022-06-01,2022-09-01"
           projection.dt.interval: "1"
           projection.dt.interval.unit: DAYS
-          storage.location.template: !Sub s3://${pAnalyticsBucket}/${pTeamName}/${pDatasetName}/curated/dt=${!dt}/
+          projection.derived_genre.type: enum
+          projection.derived_genre.values: "PHIM_TRUNG,PHIM_VIET,PHIM_HAN,PHIM_AU_MY,ANIME,THE_THAO,NHAC,TRUYEN_HINH,UNKNOWN,EMPTY_QUERY"
+          storage.location.template: !Sub s3://${pAnalyticsBucket}/${pTeamName}/${pDatasetName}/curated/dt=${!dt}/derived_genre=${!derived_genre}/
         StorageDescriptor:
           Location: !Sub s3://${pAnalyticsBucket}/${pTeamName}/${pDatasetName}/curated/
           InputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat
@@ -233,20 +250,20 @@ Resources:
               Type: string
         PartitionKeys:
           - Name: dt
-            Type: date
+            Type: string
+          - Name: derived_genre
+            Type: string
 
 Outputs:
+  # Outputs are still visible via describe-stacks; the `Export.Name` blocks
+  # were removed after verifying zero importers via cloudformation:ListImports.
   oGlueJobName:
     Description: Glue job name
     Value: !Ref rGlueJob
-    Export:
-      Name: !Sub ${AWS::StackName}-glue-job-name
 
   oGlueRoleArn:
     Description: Glue IAM role ARN
     Value: !GetAtt rGlueRole.Arn
-    Export:
-      Name: !Sub ${AWS::StackName}-glue-role-arn
 
   oPipelineDeploymentInstance:
     Description: Pipeline deployment instance this job belongs to

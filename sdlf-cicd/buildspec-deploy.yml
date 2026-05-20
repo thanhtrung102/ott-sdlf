@@ -26,7 +26,8 @@ phases:
       - ATHENA_WG_CFG=$(aws athena get-work-group --work-group sdlf-ott --region $REGION --query "WorkGroup.Configuration.ResultConfiguration" --output json)
       - ATHENA_RESULTS_BUCKET=$(echo $ATHENA_WG_CFG | python3 -c "import json,sys; c=json.load(sys.stdin); print(c['OutputLocation'].split('/')[2])")
       - ATHENA_WG_KMS=$(echo $ATHENA_WG_CFG | python3 -c "import json,sys; c=json.load(sys.stdin); print(c.get('EncryptionConfiguration',{}).get('KmsKey',''))")
-      - echo "Account $ACCOUNT  KMS $KMS_KEY  AthenaResultsBucket $ATHENA_RESULTS_BUCKET  AthenaWgKms $ATHENA_WG_KMS"
+      - API_KEY=$(aws ssm get-parameter --name "/sdlf/ott/api-key/prod" --query "Parameter.Value" --output text --region $REGION)
+      - echo "Account $ACCOUNT  KMS $KMS_KEY  AthenaResultsBucket $ATHENA_RESULTS_BUCKET  AthenaWgKms $ATHENA_WG_KMS  ApiKeyLen ${#API_KEY}"
       - |
         # One-time migration: delete gold quality stack if it is on the old separate template.
         # Detection: old template has no pStageName parameter; new unified template always has it.
@@ -147,7 +148,8 @@ phases:
           --region $REGION || true
         echo "DATA_LOCATION_ACCESS grant applied for $TRENDING_ROLE_ARN"
 
-        deploy sdlf-pipeline-ott-api sdlf-main-ott/pipeline-ott-api.yaml
+        deploy sdlf-pipeline-ott-api sdlf-main-ott/pipeline-ott-api.yaml \
+          pApiKey=${API_KEY}
 
   post_build:
     commands:

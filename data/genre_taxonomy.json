@@ -1,0 +1,77 @@
+{
+  "genres": [
+    {
+      "code": "THE_THAO",
+      "label": "Sports",
+      "priority": 1,
+      "keywords": ["bóng đá", "football", "soccer", "ronaldo", "messi", "nba", "tennis",
+                   "chelsea", "liverpool", "manchester", "real madrid", "barcelona",
+                   "u23", "việt nam", "seagames", "thể thao", "sports", "golf", "boxing"]
+    },
+    {
+      "code": "ANIME",
+      "label": "Anime / Animation",
+      "priority": 2,
+      "keywords": ["anime", "naruto", "one piece", "dragon ball", "attack on titan",
+                   "demon slayer", "my hero academia", "jujutsu", "bleach", "hoạt hình"]
+    },
+    {
+      "code": "NHAC",
+      "label": "Music / Karaoke",
+      "priority": 3,
+      "keywords": ["nhạc", "music", "karaoke", "sơn tùng", "đen vâu", "mtp", "bts",
+                   "blackpink", "vpop", "kpop", "mv", "ca nhạc", "nhaccuatui"]
+    },
+    {
+      "code": "TRUYEN_HINH",
+      "label": "Live TV / News",
+      "priority": 4,
+      "keywords": ["vtv1", "vtv2", "vtv3", "vtv4", "vtv6", "htv7", "htv9", "trực tiếp",
+                   "live", "tin tức", "thời sự", "bản tin", "kênh truyền hình"]
+    },
+    {
+      "code": "PHIM_AU_MY",
+      "label": "Western / Hollywood",
+      "priority": 5,
+      "keywords": ["avengers", "marvel", "dc", "batman", "superman", "top gun", "fast",
+                   "furious", "mission impossible", "james bond", "007", "thor", "iron man",
+                   "phim mỹ", "phim anh", "hollywood"]
+    },
+    {
+      "code": "PHIM_TRUNG",
+      "label": "Chinese / Korean Drama",
+      "priority": 6,
+      "keywords": ["phim trung", "phim hàn", "hoa du ký", "diên hy", "tam sinh",
+                   "goblin", "crash landing", "crash", "my love from the star",
+                   "hàn quốc", "trung quốc", "kdrama", "cdrama"]
+    },
+    {
+      "code": "PHIM_VIET",
+      "label": "Vietnamese Drama",
+      "priority": 7,
+      "keywords": ["phim việt", "tình yêu và tham vọng", "về nhà đi con", "sống chung",
+                   "hương vị tình thân", "11 tháng 5 ngày", "phim việt nam", "vtv"]
+    },
+    {
+      "code": "UNKNOWN",
+      "label": "Unclassified",
+      "priority": 99,
+      "keywords": []
+    }
+  ],
+  "platform_groups": {
+    "OTTBox": ["ottbox", "stb", "set-top box", "fpt play box", "himedia", "android box"],
+    "SmartTV": ["smarttv", "smart tv", "samsung", "lg", "sony", "panasonic", "tcl", "hisense", "tizen", "webos"],
+    "Android": ["android phone", "android tablet", "android tv", "android"],
+    "iOS": ["ios phone", "iphone", "ipad", "ios"],
+    "Web": ["web browser", "chrome", "firefox", "safari", "web"],
+    "Other": []
+  },
+  "network_types": {
+    "wifi": ["wifi", "wi-fi", "wlan"],
+    "4g": ["4g", "lte", "mobile"],
+    "cable": ["cable", "ethernet", "lan", "fiber"],
+    "3g": ["3g"],
+    "unknown": []
+  }
+}

@@ -112,6 +112,11 @@ Resources:
                 Action:
                   - sqs:SendMessage
                 Resource: !GetAtt rContentGapDlq.Arn
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                Resource: "*"
 
   ######## SQS DLQ ########
 
@@ -121,6 +126,24 @@ Resources:
       QueueName: sdlf-ott-mainCG-dlq
       MessageRetentionPeriod: 1209600
       KmsMasterKeyId: !Ref pKmsKeyArn
+
+  rContentGapDlqPolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref rContentGapDlq
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowEventBridgeSendMessage
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt rContentGapDlq.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt rContentGapTriggerRule.Arn
 
   ######## CLOUDWATCH LOGS ########
 
@@ -140,8 +163,10 @@ Resources:
       Runtime: python3.12
       Handler: index.lambda_handler
       Role: !GetAtt rContentGapRole.Arn
-      Timeout: 300
+      Timeout: 600
       MemorySize: 256
+      TracingConfig:
+        Mode: Active
       Layers:
         - "{{resolve:ssm:/SDLF/Lambda/LatestDatalakeLibraryLayer}}"
       Environment:
@@ -157,196 +182,8 @@ Resources:
           PIPELINE: main
           PIPELINE_STAGE: ContentGap
       Code:
-        ZipFile: |
-          # Source of truth: lambda/content-gap/src/lambda_function.py
-          # Kept inline for self-contained CFN deployment.
-          # Update both files together when making code changes.
-          import csv, io, os, time
-          from datetime import date, timedelta, timezone
-          import boto3
-          from datalake_library.commons import init_logger
-
-          logger = init_logger(__name__)
-          athena = boto3.client("athena")
-          s3     = boto3.client("s3")
-          sns    = boto3.client("sns")
-
-          DB               = os.environ["ATHENA_DATABASE"]
-          RESULTS          = os.environ["ATHENA_RESULTS"]
-          STAGE_BUCKET     = os.environ["STAGE_BUCKET"]
-          ANALYTICS_PREFIX = os.environ["ANALYTICS_PREFIX"]
-          SNS_TOPIC_ARN    = os.environ["SNS_TOPIC_ARN"]
-          REPORT_TTL       = int(os.environ.get("REPORT_PRESIGN_TTL_SECONDS", "604800"))
-          WORKGROUP        = os.environ.get("ATHENA_WORKGROUP", "sdlf-ott")
-
-          QUERIES = {
-              "content_gaps": """
-                  SELECT keyword_norm, derived_genre,
-                         COUNT(*) AS searches,
-                         SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END) AS abandoned,
-                         ROUND(100.0 * SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END)
-                               / CAST(COUNT(*) AS double), 1) AS abandon_rate_pct
-                  FROM {db}.curated
-                  WHERE dt >= '{start_dt}' AND derived_genre != 'UNKNOWN'
-                  GROUP BY keyword_norm, derived_genre
-                  HAVING SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END) >= 5
-                  ORDER BY abandon_rate_pct DESC, abandoned DESC LIMIT 500
-              """,
-              "premium_vs_free": """
-                  SELECT derived_genre, COUNT(*) AS total_searches,
-                         SUM(CASE WHEN has_premium THEN 1 ELSE 0 END) AS premium_searches,
-                         SUM(CASE WHEN NOT has_premium THEN 1 ELSE 0 END) AS free_searches,
-                         ROUND(100.0 * SUM(CASE WHEN has_premium THEN 1 ELSE 0 END)
-                               / CAST(COUNT(*) AS double), 1) AS premium_share_pct
-                  FROM {db}.curated WHERE dt >= '{start_dt}'
-                  GROUP BY derived_genre ORDER BY premium_share_pct DESC
-              """,
-              "repeat_search_rate": """
-                  SELECT derived_genre, COUNT(*) AS total_searches,
-                         SUM(CASE WHEN is_repeat_search THEN 1 ELSE 0 END) AS repeat_searches,
-                         ROUND(100.0 * SUM(CASE WHEN is_repeat_search THEN 1 ELSE 0 END)
-                               / CAST(COUNT(*) AS double), 1) AS repeat_pct
-                  FROM {db}.curated WHERE dt >= '{start_dt}'
-                  GROUP BY derived_genre ORDER BY repeat_pct DESC
-              """,
-              "hour_of_day_heatmap": """
-                  SELECT hour_of_day_vn, derived_genre, COUNT(*) AS searches,
-                         ROUND(100.0 * COUNT(*) / CAST(SUM(COUNT(*)) OVER (PARTITION BY derived_genre) AS double), 1) AS pct_of_genre
-                  FROM {db}.curated WHERE dt >= '{start_dt}' AND derived_genre != 'UNKNOWN'
-                  GROUP BY hour_of_day_vn, derived_genre ORDER BY derived_genre, hour_of_day_vn
-              """,
-              "guest_vs_auth_demand": """
-                  SELECT derived_genre, COUNT(*) AS total_searches,
-                         SUM(CASE WHEN user_is_authenticated THEN 1 ELSE 0 END) AS auth_searches,
-                         SUM(CASE WHEN NOT user_is_authenticated THEN 1 ELSE 0 END) AS guest_searches,
-                         ROUND(100.0 * SUM(CASE WHEN NOT user_is_authenticated THEN 1 ELSE 0 END)
-                               / CAST(COUNT(*) AS double), 1) AS guest_share_pct
-                  FROM {db}.curated WHERE dt >= '{start_dt}' AND derived_genre != 'UNKNOWN'
-                  GROUP BY derived_genre ORDER BY guest_share_pct DESC
-              """,
-          }
-
-          QUERY_TITLES = {
-              "content_gaps": "Content Gaps — Top Abandoned Keywords",
-              "premium_vs_free": "Premium vs Free Demand by Genre",
-              "repeat_search_rate": "Repeat Search Rate by Genre",
-              "hour_of_day_heatmap": "Search Volume by Hour (Vietnam Time)",
-              "guest_vs_auth_demand": "Guest vs Authenticated Demand by Genre",
-          }
-
-          QUERY_DESCRIPTIONS = {
-              "content_gaps": "High abandoned + high abandon_rate_pct = title missing from platform. Use as acquisition shortlist.",
-              "premium_vs_free": "High premium_share_pct genres justify higher licensing spend.",
-              "repeat_search_rate": "High repeat_pct = users keep searching without finding. Content or UX problem.",
-              "hour_of_day_heatmap": "Use pct_of_genre to find peak hours per genre for push notification scheduling.",
-              "guest_vs_auth_demand": "High guest_share_pct genres are strongest login-gate conversion opportunities.",
-          }
-
-          def latest_dt():
-              _, rows = athena_query(f"SELECT MAX(dt) AS max_dt FROM {DB}.curated")
-              val = rows[0].get("max_dt", "") if rows else ""
-              if not val: raise RuntimeError("curated table has no data")
-              return date.fromisoformat(val)
-
-          def athena_query(sql):
-              r = athena.start_query_execution(
-                  QueryString=sql,
-                  QueryExecutionContext={"Database": DB},
-                  ResultConfiguration={"OutputLocation": RESULTS},
-                  WorkGroup=WORKGROUP,
-              )
-              qid = r["QueryExecutionId"]
-              while True:
-                  st = athena.get_query_execution(QueryExecutionId=qid)["QueryExecution"]["Status"]["State"]
-                  if st == "SUCCEEDED": break
-                  if st in ("FAILED","CANCELLED"): raise RuntimeError(f"Athena query {st}: {qid}")
-                  time.sleep(3)
-              headers, rows = None, []
-              for page in athena.get_paginator("get_query_results").paginate(QueryExecutionId=qid):
-                  for row in page["ResultSet"]["Rows"]:
-                      values = [col.get("VarCharValue","") for col in row["Data"]]
-                      if headers is None: headers = values; continue
-                      rows.append(dict(zip(headers, values)))
-              return headers or [], rows
-
-          def write_csv(key, headers, rows):
-              buf = io.StringIO()
-              writer = csv.DictWriter(buf, fieldnames=headers)
-              writer.writeheader(); writer.writerows(rows)
-              s3.put_object(Bucket=STAGE_BUCKET, Key=key, Body=buf.getvalue().encode("utf-8"), ContentType="text/csv")
-              logger.info(f"Wrote {len(rows)} rows -> s3://{STAGE_BUCKET}/{key}")
-              return len(rows)
-
-          def _html_table(headers, rows):
-              if not headers: return "<p><em>No data</em></p>"
-              ths = "".join(f"<th>{h}</th>" for h in headers)
-              trs = "".join("<tr>" + "".join(f"<td>{row.get(h,'')}</td>" for h in headers) + "</tr>" for row in rows)
-              return f"<table><thead><tr>{ths}</tr></thead><tbody>{trs}</tbody></table>"
-
-          def build_html_report(dt, results):
-              sections = ""
-              for name, (headers, rows, count) in results.items():
-                  title = QUERY_TITLES.get(name, name)
-                  desc = QUERY_DESCRIPTIONS.get(name, "")
-                  badge = f'<span class="badge ok">{count} rows</span>' if count >= 0 else '<span class="badge err">FAILED</span>'
-                  table = _html_table(headers, rows) if count >= 0 else "<p><em>Query failed</em></p>"
-                  sections += f'<section><h2>{title} {badge}</h2><p class="desc">{desc}</p>{table}</section>'
-              return (
-                  f'<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">'
-                  f'<meta name="viewport" content="width=device-width,initial-scale=1">'
-                  f'<title>OTT Content Gap Report — {dt}</title>'
-                  f'<style>body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;background:#f5f5f5;color:#222}}'
-                  f'header{{background:#1a1a2e;color:#fff;padding:24px 32px}}header h1{{margin:0 0 4px;font-size:1.4rem}}'
-                  f'header p{{margin:0;opacity:.7;font-size:.9rem}}main{{max-width:1200px;margin:0 auto;padding:24px 32px}}'
-                  f'section{{background:#fff;border-radius:8px;padding:24px;margin-bottom:24px;box-shadow:0 1px 4px rgba(0,0,0,.08)}}'
-                  f'h2{{margin:0 0 8px;font-size:1.1rem;display:flex;align-items:center;gap:10px}}'
-                  f'.desc{{margin:0 0 16px;color:#555;font-size:.85rem}}'
-                  f'table{{width:100%;border-collapse:collapse;font-size:.83rem}}'
-                  f'th{{background:#f0f0f0;text-align:left;padding:8px 10px;border-bottom:2px solid #ddd;white-space:nowrap}}'
-                  f'td{{padding:7px 10px;border-bottom:1px solid #eee}}tr:hover td{{background:#fafafa}}'
-                  f'.badge{{font-size:.75rem;padding:2px 8px;border-radius:12px;font-weight:600}}'
-                  f'.badge.ok{{background:#d4edda;color:#155724}}.badge.err{{background:#f8d7da;color:#721c24}}'
-                  f'</style></head><body>'
-                  f'<header><h1>OTT Content Gap Report</h1>'
-                  f'<p>Pipeline run: {dt} &nbsp;|&nbsp; Source: {DB}.curated</p></header>'
-                  f'<main>{sections}</main></body></html>'
-              )
-
-          def write_html_report(key, html):
-              s3.put_object(Bucket=STAGE_BUCKET, Key=key, Body=html.encode("utf-8"), ContentType="text/html")
-              url = s3.generate_presigned_url("get_object", Params={"Bucket": STAGE_BUCKET, "Key": key}, ExpiresIn=REPORT_TTL)
-              logger.info(f"HTML report -> s3://{STAGE_BUCKET}/{key}")
-              return url
-
-          def lambda_handler(event, context):
-              logger.info(f"Content gap report triggered — source: {event.get('source','?')} detail-type: {event.get('detail-type','?')}")
-              ref_date = latest_dt()
-              dt = str(ref_date)
-              start_dt = str(ref_date - timedelta(days=90))
-              prefix = f"{ANALYTICS_PREFIX}{dt}/"
-              summary, errors, results = {}, 0, {}
-              for name, sql_tpl in QUERIES.items():
-                  try:
-                      headers, rows = athena_query(sql_tpl.format(db=DB, start_dt=start_dt))
-                      count = write_csv(f"{prefix}{name}.csv", headers, rows)
-                      summary[name] = count; results[name] = (headers, rows, count)
-                  except Exception as e:
-                      logger.error(f"{name} failed: {e}"); summary[name] = -1; results[name] = ([], [], -1); errors += 1
-              html = build_html_report(dt, results)
-              report_url = write_html_report(f"{prefix}report.html", html)
-              message = (
-                  f"OTT Content Gap Report — {dt}\n"
-                  f"Content gaps (abandoned keywords): {summary.get('content_gaps',0)}\n"
-                  f"Premium vs free: {summary.get('premium_vs_free',0)} genres\n"
-                  f"Repeat search rate: {summary.get('repeat_search_rate',0)} genres\n"
-                  f"Hour heatmap: {summary.get('hour_of_day_heatmap',0)} rows\n"
-                  f"Guest vs auth: {summary.get('guest_vs_auth_demand',0)} genres\n"
-                  f"Errors: {errors}\n\nDashboard: {report_url}"
-              )
-              sns.publish(TopicArn=SNS_TOPIC_ARN, Subject=f"OTT Content Gap Report {dt}", Message=message)
-              logger.info(f"Report complete — {sum(v for v in summary.values() if v>0)} total rows, {errors} errors")
-              return {"dt": dt, "reports": summary, "prefix": f"s3://{STAGE_BUCKET}/{prefix}", "report_url": report_url, "errors": errors}
-
+        S3Bucket: "{{resolve:ssm:/sdlf/storage/rArtifactsBucket/prod}}"
+        S3Key: lambda/contentgap.zip
   rContentGapEventInvokeConfig:
     Type: AWS::Lambda::EventInvokeConfig
     Properties:
@@ -379,6 +216,11 @@ Resources:
       Targets:
         - Id: sdlf-ott-mainCG-lambda-target
           Arn: !GetAtt rContentGapFunction.Arn
+          DeadLetterConfig:
+            Arn: !GetAtt rContentGapDlq.Arn
+          RetryPolicy:
+            MaximumRetryAttempts: 2
+            MaximumEventAgeInSeconds: 3600
 
   ######## SSM ########
 
@@ -418,9 +260,9 @@ Resources:
           projection.dt.range: "2022-01-01,NOW+1YEARS"
           projection.dt.interval: "1"
           projection.dt.interval.unit: DAYS
-          storage.location.template: !Sub s3://${pStageBucket}/analytics/content-gap/${!dt}/
+          storage.location.template: !Sub s3://${pStageBucket}/analytics/content-gap/content_gaps/${!dt}/
         StorageDescriptor:
-          Location: !Sub s3://${pStageBucket}/analytics/content-gap/
+          Location: !Sub s3://${pStageBucket}/analytics/content-gap/content_gaps/
           InputFormat: org.apache.hadoop.mapred.TextInputFormat
           OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
           SerdeInfo:
@@ -461,9 +303,9 @@ Resources:
           projection.dt.range: "2022-01-01,NOW+1YEARS"
           projection.dt.interval: "1"
           projection.dt.interval.unit: DAYS
-          storage.location.template: !Sub s3://${pStageBucket}/analytics/content-gap/${!dt}/
+          storage.location.template: !Sub s3://${pStageBucket}/analytics/content-gap/premium_vs_free/${!dt}/
         StorageDescriptor:
-          Location: !Sub s3://${pStageBucket}/analytics/content-gap/
+          Location: !Sub s3://${pStageBucket}/analytics/content-gap/premium_vs_free/
           InputFormat: org.apache.hadoop.mapred.TextInputFormat
           OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
           SerdeInfo:
@@ -504,9 +346,9 @@ Resources:
           projection.dt.range: "2022-01-01,NOW+1YEARS"
           projection.dt.interval: "1"
           projection.dt.interval.unit: DAYS
-          storage.location.template: !Sub s3://${pStageBucket}/analytics/content-gap/${!dt}/
+          storage.location.template: !Sub s3://${pStageBucket}/analytics/content-gap/repeat_search_rate/${!dt}/
         StorageDescriptor:
-          Location: !Sub s3://${pStageBucket}/analytics/content-gap/
+          Location: !Sub s3://${pStageBucket}/analytics/content-gap/repeat_search_rate/
           InputFormat: org.apache.hadoop.mapred.TextInputFormat
           OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
           SerdeInfo:
@@ -545,9 +387,9 @@ Resources:
           projection.dt.range: "2022-01-01,NOW+1YEARS"
           projection.dt.interval: "1"
           projection.dt.interval.unit: DAYS
-          storage.location.template: !Sub s3://${pStageBucket}/analytics/content-gap/${!dt}/
+          storage.location.template: !Sub s3://${pStageBucket}/analytics/content-gap/hour_of_day_heatmap/${!dt}/
         StorageDescriptor:
-          Location: !Sub s3://${pStageBucket}/analytics/content-gap/
+          Location: !Sub s3://${pStageBucket}/analytics/content-gap/hour_of_day_heatmap/
           InputFormat: org.apache.hadoop.mapred.TextInputFormat
           OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
           SerdeInfo:
@@ -586,9 +428,9 @@ Resources:
           projection.dt.range: "2022-01-01,NOW+1YEARS"
           projection.dt.interval: "1"
           projection.dt.interval.unit: DAYS
-          storage.location.template: !Sub s3://${pStageBucket}/analytics/content-gap/${!dt}/
+          storage.location.template: !Sub s3://${pStageBucket}/analytics/content-gap/guest_vs_auth_demand/${!dt}/
         StorageDescriptor:
-          Location: !Sub s3://${pStageBucket}/analytics/content-gap/
+          Location: !Sub s3://${pStageBucket}/analytics/content-gap/guest_vs_auth_demand/
           InputFormat: org.apache.hadoop.mapred.TextInputFormat
           OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
           SerdeInfo:

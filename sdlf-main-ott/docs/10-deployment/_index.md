@@ -23,9 +23,10 @@ Before the first deployment, the following must be in place:
 | KMS key created and registered in SSM | `/sdlf/storage/rKMSKey/prod` |
 | SNS topic created and registered in SSM | `/SDLF/SNS/ott/Notifications` |
 | SDLF Lambda layer available | `/SDLF/Lambda/LatestDatalakeLibraryLayer` |
-| `genre_classifier_pkg.zip` uploaded | `s3://[artifacts-bucket]/ott/searchevents/genre_classifier_pkg.zip` — required by the Glue job |
+| `genre_classifier_pkg.zip` uploaded | `s3://[artifacts-bucket]/ott/searchevents/genre_classifier_pkg.zip` — required by the Glue job (a baked-in minimal LUT fallback is now compiled into the Glue script, so a missing/corrupt zip degrades classification but no longer crashes the job) |
 | Bedrock model enabled in region | `anthropic.claude-haiku-4-5-20251001-v1:0` must be enabled in ap-southeast-1 |
-| Lake Formation data lake admin configured | Required for the `IAM_ALLOWED_PRINCIPALS` revocation step |
+| Lake Formation data lake admin configured | Required for the `IAM_ALLOWED_PRINCIPALS` revocation — already executed on `curated`, `raw_search_events`, and `keyword_trends`; re-run for any new table added later |
+| API key seeded in SSM | `/sdlf/ott/api-key/prod` — 32-char random string; the buildspec passes it to the API stack as `pApiKey` |
 
 ---
 
@@ -42,25 +43,30 @@ Before the first deployment, the following must be in place:
 
 ## Stack deployment order
 
-Stacks must be deployed in dependency order. The CodePipeline Deploy stage handles this sequencing automatically.
+Stacks must be deployed in dependency order. The CodePipeline Deploy stage (`sdlf-cicd/buildspec-deploy.yml`) handles this sequencing automatically — the list below matches that buildspec exactly.
+
+**Prerequisite (deployed once during framework setup, not by this CI/CD)**:
+`sdlf-main/foundations-ott-prod.yaml`, `team-ott-prod.yaml`, `dataset-searchevents-prod.yaml` — buckets, KMS, Lake Formation registration, team + dataset Glue DBs.
+
+**OTT CI/CD-managed stacks (11)**:
 
 ```
-1. datasets.yaml              — SDLF dataset module (searchevents)
-2. pipeline-ott-glue-job.yaml — Glue job, IAM role, catalog tables (raw + curated)
-3. pipeline-ott-mainA.yaml    — Stage A state machine + Lambda
-4. pipeline-ott-mainB.yaml    — Stage B state machine
-5. pipeline-ott-dq-stage.yaml (mainDQ instance)  — Curated DQ state machine
-6. pipeline-ott-contentgap.yaml   — Content Gap Lambda + catalog tables
-7. pipeline-ott-lutrefresh.yaml   — LUT Refresh Lambda
-8. pipeline-ott-trending.yaml     — Trending Lambda + gold catalog tables
-9. pipeline-ott-dq-stage.yaml (mainGoldDQ instance) — Gold DQ state machine
-10. pipeline-ott-api.yaml         — HTTP API
-11. pipeline-ott-lakeformation.yaml — Lake Formation grants
-12. pipeline-ott-monitoring.yaml   — Dashboard + alarms
+1.  pipeline-ott-glue-job.yaml      — Glue job, IAM role, catalog tables (raw + curated)
+2.  pipeline-ott-mainA.yaml         — Stage A state machine + Lambda
+3.  pipeline-ott-mainB.yaml         — Stage B state machine (orchestrates Glue)
+4.  pipeline-ott-dq-stage.yaml      — Curated DQ state machine (mainDQ instance)
+5.  pipeline-ott-lutrefresh.yaml    — LUT Refresh Lambda + DLQ + EventBridge rule
+6.  pipeline-ott-contentgap.yaml    — Content Gap Lambda + 5 catalog tables + DLQ
+7.  pipeline-ott-trending.yaml      — Trending Lambda + gold catalog table + DLQ
+8.  pipeline-ott-dq-stage.yaml      — Gold DQ state machine (mainGoldDQ instance)
+9.  pipeline-ott-monitoring.yaml    — CloudWatch dashboard + 14 alarms
+10. pipeline-ott-lakeformation.yaml — Column-level RBAC on curated
+11. pipeline-ott-api.yaml           — HTTP API (x-api-key, freshness headers, arm64)
 ```
 
-> Stack 9 (Gold DQ) depends on the gold Glue database created by stack 8.
-> Stack 11 (Lake Formation) depends on all role ARNs exported by stacks 3–9.
+> Stack 8 (Gold DQ) depends on the gold Glue database created by stack 7.
+> Stack 10 (Lake Formation) depends on all role ARNs exported by stacks 2–7.
+> Stack 11 (API) is last so its IAM role can be granted against already-created stage-bucket paths.
 
 ---
 
@@ -157,10 +163,20 @@ After all stacks deploy:
 
 5. **Smoke-test the API**
    ```bash
-   curl "$(aws ssm get-parameter --name /sdlf/pipeline/rApiUrl/ott \
+   KEY=$(aws ssm get-parameter --name /sdlf/ott/api-key/prod \
+     --query Parameter.Value --output text --region ap-southeast-1)
+   curl -H "x-api-key: $KEY" "$(aws ssm get-parameter --name /sdlf/pipeline/rApiUrl/ott \
      --query Parameter.Value --output text)/content-gaps?limit=5"
    ```
-   Returns `[]` until the first pipeline run completes.
+   Returns `[]` until the first pipeline run completes. The response includes
+   `X-Data-Freshness` and `Last-Modified` headers so callers can detect stale data.
+
+6. **Run the full contract test (16 assertions)**
+   ```bash
+   $env:OTT_API_KEY = (aws ssm get-parameter --name /sdlf/ott/api-key/prod \
+     --query Parameter.Value --output text --region ap-southeast-1)
+   python D:/ott-sdlf/scripts/contract_test.py
+   ```
 
 ---
 

@@ -150,15 +150,48 @@ This means the API always serves the most recently completed daily run without r
 
 ---
 
+## Authentication
+
+Every request must include the `x-api-key` header. The key value is stored in SSM at `/sdlf/ott/api-key/prod` and passed to the Lambda as the `API_KEY` environment variable at deploy time (via the CFN parameter `pApiKey`, `NoEcho: true`). Requests without the header — or with a mismatched value — return `401 Unauthorized` before any S3 read occurs.
+
+```bash
+# Retrieve the key
+KEY=$(aws ssm get-parameter --name /sdlf/ott/api-key/prod \
+  --query Parameter.Value --output text --region ap-southeast-1)
+
+# Call the API
+curl -H "x-api-key: $KEY" "$(aws ssm get-parameter --name /sdlf/pipeline/rApiUrl/ott \
+  --query Parameter.Value --output text)/trending?limit=10"
+```
+
+To rotate the key: update `/sdlf/ott/api-key/prod` in SSM, then redeploy the API stack — the new value is wired through CFN.
+
+---
+
+## Response headers
+
+| Header | Example | Purpose |
+|---|---|---|
+| `Content-Type` | `application/json` | Always JSON |
+| `Last-Modified` | `Tue, 19 May 2026 15:41:26 +0000` | RFC-7231 timestamp of the underlying S3 CSV |
+| `X-Data-Freshness` | `2026-05-19T15:41:26+00:00` | ISO-8601 equivalent of `Last-Modified` for easier client parsing |
+| `Cache-Control` | `public, max-age=300` | 5-minute client-side caching (analytics refresh once/day) |
+
+A caller can compare `X-Data-Freshness` against the current time to detect a stale or missing daily batch without polling Athena.
+
+---
+
 ## CORS
 
 ```yaml
 CorsConfiguration:
   AllowOrigins: ["*"]
   AllowMethods: ["GET"]
+  AllowHeaders: ["Content-Type", "x-api-key"]
+  ExposeHeaders: ["Last-Modified", "X-Data-Freshness"]
 ```
 
-All origins are allowed for `GET` requests. No authentication is required for the API endpoints (internal use assumed). Add an API key or Cognito authoriser if external exposure is planned.
+All origins are allowed for `GET` requests; browsers can read the freshness headers. The `x-api-key` requirement is enforced inside the Lambda (HTTP API v2 has no built-in API-key feature).
 
 ---
 

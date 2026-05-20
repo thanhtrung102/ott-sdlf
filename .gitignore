@@ -1,7 +1,50 @@
+# --- Build artifacts ---
 output/
-*.zip
+dist/
+build/
+*.zip                 # classifier zip is artifact-bucket-managed (LUT-refresh rebuilds it)
+
+# --- Python ---
 __pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.tox/
+
+# --- Secrets / env ---
+.env
+.env.local
+*.pem
+*.key
+
+# --- AWS tooling ---
 .aws-sam/
 samconfig.toml
-*.pyc
-.env
+cdk.out/
+.terraform/
+.terraform.lock.hcl
+
+# --- IDE / editor ---
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+*.bak
+*.orig
+
+# --- OS cruft ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Logs ---
+*.log
+
+# --- Upstream framework reference (deploys via SSM-resolved URLs, not local paths) ---
+sdlf-framework/

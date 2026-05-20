@@ -37,6 +37,7 @@ Every day, millions of search queries are issued on the platform. This pipeline 
 | 8 | [Security](8-security/) | Lake Formation column-level access, KMS, IAM |
 | 9 | [Monitoring](9-monitoring/) | CloudWatch dashboard, alarms, DLQs |
 | 10 | [Deployment](10-deployment/) | Prerequisites, stack order, CI/CD pipeline |
+| 11 | [Workshop](workshop/) | **FCJ-format guided walkthrough — 7 chapters, ~90 min, with reproducible commands + live output** |
 
 ---
 

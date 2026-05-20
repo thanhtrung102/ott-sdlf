@@ -18,6 +18,11 @@ Parameters:
     Type: Number
     Default: 50
     Description: Default row limit when ?limit is not specified
+  pApiKey:
+    Type: String
+    NoEcho: true
+    MinLength: 16
+    Description: Secret value required in the x-api-key header on every request
 
 Resources:
 
@@ -70,6 +75,12 @@ Resources:
                   - kms:Decrypt
                   - kms:GenerateDataKey
                 Resource: !Ref pKmsKeyArn
+              - Sid: XRay
+                Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                Resource: "*"
 
   ######## LAMBDA ########
 
@@ -89,83 +100,20 @@ Resources:
       Role: !GetAtt rApiRole.Arn
       Timeout: 30
       MemorySize: 128
+      # arm64 (Graviton2) — pure-Python handler, no Lambda Layer; ~20% cheaper
+      # per GB-second than x86_64 at identical latency.
+      Architectures:
+        - arm64
+      TracingConfig:
+        Mode: Active
       Environment:
         Variables:
           STAGE_BUCKET: !Ref pStageBucket
           TOP_N: !Ref pTopN
+          API_KEY: !Ref pApiKey
       Code:
-        ZipFile: |
-          import csv, io, json, os
-          import boto3
-
-          s3 = boto3.client("s3")
-          BUCKET = os.environ["STAGE_BUCKET"]
-          TOP_N = int(os.environ.get("TOP_N", "50"))
-
-          def latest_date_prefix(base):
-              resp = s3.list_objects_v2(Bucket=BUCKET, Prefix=base, Delimiter="/")
-              folders = sorted(p["Prefix"] for p in resp.get("CommonPrefixes", []))
-              return folders[-1] if folders else None
-
-          def read_csv(key, limit):
-              obj = s3.get_object(Bucket=BUCKET, Key=key)
-              reader = csv.DictReader(io.StringIO(obj["Body"].read().decode("utf-8")))
-              return [row for _, row in zip(range(limit), reader)]
-
-          def ok(rows):
-              return {
-                  "statusCode": 200,
-                  "headers": {"Content-Type": "application/json"},
-                  "body": json.dumps(rows),
-              }
-
-          def err(code, msg):
-              return {"statusCode": code, "body": json.dumps({"error": msg})}
-
-          _VALID_TRENDING_TYPES = {"all", "unknown"}
-          _VALID_CG_REPORTS = {
-              "content_gaps", "premium_vs_free", "repeat_search_rate",
-              "hour_of_day_heatmap", "guest_vs_auth_demand",
-          }
-
-          def handler(event, context):
-              path = event.get("rawPath", "")
-              qs = event.get("queryStringParameters") or {}
-              try:
-                  limit = min(int(qs.get("limit", TOP_N)), 500)
-              except (ValueError, TypeError):
-                  return err(400, "limit must be an integer")
-              date = qs.get("date")
-
-              try:
-                  if path == "/trending":
-                      trend_type = qs.get("type", "all")
-                      if trend_type not in _VALID_TRENDING_TYPES:
-                          return err(400, "type must be 'all' or 'unknown'")
-                      base = f"analytics/trending/{trend_type}/"
-                      prefix = f"{base}{date}/" if date else latest_date_prefix(base)
-                      if not prefix:
-                          return err(404, "No trending data available yet")
-                      rows = read_csv(f"{prefix}trending_{trend_type}.csv", limit)
-                      return ok(rows)
-
-                  elif path == "/content-gaps":
-                      report = qs.get("report", "content_gaps")
-                      if report not in _VALID_CG_REPORTS:
-                          return err(400, f"report must be one of: {', '.join(sorted(_VALID_CG_REPORTS))}")
-                      base = "analytics/content-gap/"
-                      prefix = f"{base}{date}/" if date else latest_date_prefix(base)
-                      if not prefix:
-                          return err(404, "No content-gap data available yet")
-                      rows = read_csv(f"{prefix}{report}.csv", limit)
-                      return ok(rows)
-
-                  else:
-                      return err(404, "Not found — use /trending or /content-gaps")
-
-              except Exception as exc:
-                  return err(500, str(exc))
-
+        S3Bucket: "{{resolve:ssm:/sdlf/storage/rArtifactsBucket/prod}}"
+        S3Key: lambda/api.zip
   ######## HTTP API ########
 
   rHttpApi:
@@ -181,6 +129,10 @@ Resources:
           - GET
         AllowHeaders:
           - Content-Type
+          - x-api-key
+        ExposeHeaders:
+          - Last-Modified
+          - X-Data-Freshness
 
   rApiIntegration:
     Type: AWS::ApiGatewayV2::Integration

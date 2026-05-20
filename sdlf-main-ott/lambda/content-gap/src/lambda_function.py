@@ -10,7 +10,8 @@ from datalake_library.commons import init_logger
 logger = init_logger(__name__)
 
 athena = boto3.client("athena")
-s3 = boto3.client("s3")
+# SigV4 needed: stage bucket uses SSE-KMS which rejects SigV2 presigned URLs.
+s3 = boto3.client("s3", config=boto3.session.Config(signature_version="s3v4"))
 sns = boto3.client("sns")
 
 DB = os.environ["ATHENA_DATABASE"]
@@ -19,6 +20,9 @@ STAGE_BUCKET = os.environ["STAGE_BUCKET"]
 ANALYTICS_PREFIX = os.environ["ANALYTICS_PREFIX"]
 SNS_TOPIC_ARN = os.environ["SNS_TOPIC_ARN"]
 REPORT_TTL = int(os.environ.get("REPORT_PRESIGN_TTL_SECONDS", "604800"))  # 7 days
+# IAM policy scopes athena:StartQueryExecution to workgroup/sdlf-ott; queries
+# without a WorkGroup default to 'primary' and fail with AccessDenied.
+WORKGROUP = os.environ.get("ATHENA_WORKGROUP", "sdlf-ott")
 
 QUERIES = {
     "content_gaps": """
@@ -28,7 +32,7 @@ QUERIES = {
                ROUND(100.0 * SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END)
                      / CAST(COUNT(*) AS double), 1) AS abandon_rate_pct
         FROM {db}.curated
-        WHERE dt >= '{start_dt}' AND derived_genre != 'UNKNOWN'
+        WHERE dt >= '{start_dt}' AND derived_genre != 'UNKNOWN' AND keyword_norm IS NOT NULL AND keyword_norm != ''
         GROUP BY keyword_norm, derived_genre
         HAVING SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END) >= 5
         ORDER BY abandon_rate_pct DESC, abandoned DESC
@@ -111,6 +115,7 @@ def athena_query(sql):
         QueryString=sql,
         QueryExecutionContext={"Database": DB},
         ResultConfiguration={"OutputLocation": RESULTS},
+        WorkGroup=WORKGROUP,
     )
     qid = r["QueryExecutionId"]
     while True:
@@ -232,7 +237,6 @@ def lambda_handler(event, context):
     ref_date = latest_dt()
     dt = str(ref_date)
     start_dt = str(ref_date - timedelta(days=90))
-    prefix = f"{ANALYTICS_PREFIX}{dt}/"
     summary = {}
     errors = 0
     results = {}
@@ -240,7 +244,7 @@ def lambda_handler(event, context):
     for name, sql_tpl in QUERIES.items():
         try:
             headers, rows = athena_query(sql_tpl.format(db=DB, start_dt=start_dt))
-            count = write_csv(f"{prefix}{name}.csv", headers, rows)
+            count = write_csv(f"{ANALYTICS_PREFIX}{name}/{dt}/{name}.csv", headers, rows)
             summary[name] = count
             results[name] = (headers, rows, count)
         except Exception as e:
@@ -250,7 +254,7 @@ def lambda_handler(event, context):
             errors += 1
 
     html = build_html_report(dt, results)
-    report_url = write_html_report(f"{prefix}report.html", html)
+    report_url = write_html_report(f"{ANALYTICS_PREFIX}report/{dt}/report.html", html)
 
     message = (
         f"OTT Content Gap Report — {dt}\n"
@@ -271,7 +275,7 @@ def lambda_handler(event, context):
     return {
         "dt": dt,
         "reports": summary,
-        "prefix": f"s3://{STAGE_BUCKET}/{prefix}",
+        "prefix": f"s3://{STAGE_BUCKET}/{ANALYTICS_PREFIX}",
         "report_url": report_url,
         "errors": errors,
     }

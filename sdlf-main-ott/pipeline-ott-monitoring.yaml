@@ -35,6 +35,9 @@ Parameters:
   pTrendingLambdaName:
     Type: String
     Default: sdlf-ott-mainTR-report
+  pApiLambdaName:
+    Type: String
+    Default: sdlf-ott-api
   pGoldDQSmArn:
     Type: AWS::SSM::Parameter::Value<String>
     Default: /sdlf/pipeline/rStateMachine/ott-mainGoldDQ
@@ -489,6 +492,116 @@ Resources:
       EvaluationPeriods: 1
       Threshold: 270000
       ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref pSnsTopicArn
+
+  # DLQ-depth alarms for the three analytics Lambdas. Stage A/B DLQs are
+  # already alarmed above; these close the gap surfaced in the 2026-05-19 audit.
+  # Each Lambda has DeadLetterConfig pointing at a dedicated SQS queue with
+  # 14-day MessageRetentionPeriod — without an alarm, failed messages would
+  # accumulate silently for two weeks before any human notices.
+  rAlarmTrendingDlq:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sdlf-ott-mainTR-dlq-not-empty
+      AlarmDescription: Trending Lambda DLQ has messages — gold table writes failed
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: sdlf-ott-mainTR-dlq
+      Statistic: Maximum
+      Period: !Ref pAlarmPeriodSeconds
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref pSnsTopicArn
+      OKActions:
+        - !Ref pSnsTopicArn
+
+  rAlarmContentGapDlq:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sdlf-ott-mainCG-dlq-not-empty
+      AlarmDescription: ContentGap Lambda DLQ has messages — daily reports failed
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: sdlf-ott-mainCG-dlq
+      Statistic: Maximum
+      Period: !Ref pAlarmPeriodSeconds
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref pSnsTopicArn
+      OKActions:
+        - !Ref pSnsTopicArn
+
+  rAlarmLutRefreshDlq:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sdlf-ott-mainLUT-dlq-not-empty
+      AlarmDescription: LUT Refresh Lambda DLQ has messages — classifier zip rebuild failed
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: sdlf-ott-mainLUT-dlq
+      Statistic: Maximum
+      Period: !Ref pAlarmPeriodSeconds
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref pSnsTopicArn
+      OKActions:
+        - !Ref pSnsTopicArn
+
+  # API Lambda failure alarms — synchronous invocation from API Gateway means
+  # a DLQ doesn't apply; the failure surface is the Errors / Throttles metrics.
+  rAlarmApiErrors:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sdlf-ott-api-errors
+      AlarmDescription: API Lambda returned 5xx — analytics callers are seeing failures
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref pApiLambdaName
+      Statistic: Sum
+      Period: !Ref pAlarmPeriodSeconds
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref pSnsTopicArn
+      OKActions:
+        - !Ref pSnsTopicArn
+
+  rAlarmApiThrottles:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sdlf-ott-api-throttles
+      AlarmDescription: API Lambda is being throttled — concurrent invocations exceeded account limit
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref pApiLambdaName
+      Statistic: Sum
+      Period: !Ref pAlarmPeriodSeconds
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
       AlarmActions:
         - !Ref pSnsTopicArn

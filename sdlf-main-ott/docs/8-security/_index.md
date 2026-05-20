@@ -42,9 +42,30 @@ Seven principal grants are defined on the `curated` table. Column-level exclusio
 - Requires `user_id_hashed` for `COUNT(DISTINCT user_id_hashed)` in the gold CTAS (`unique_users` column)
 - No columns excluded
 
-### Activation requirement
+### Activation status — ENFORCED
 
-Lake Formation column-level restrictions are **prepared but not enforced** until `IAM_ALLOWED_PRINCIPALS` is revoked by a Lake Formation administrator:
+`IAM_ALLOWED_PRINCIPALS` has been revoked from `curated`, `raw_search_events`, and `keyword_trends`. Lake Formation grants are live: every read against those tables goes through LF, and the column exclusions in the table above are in effect.
+
+Verify at any time:
+
+```bash
+python -c "
+import boto3
+lf = boto3.client('lakeformation', region_name='ap-southeast-1')
+for db, t in [('fpt_ott_searchevents_analytics','curated'),
+              ('fpt_ott_searchevents_analytics','raw_search_events'),
+              ('fpt_ott_searchevents_gold','keyword_trends')]:
+    r = lf.list_permissions(Resource={'Table':{'CatalogId':'<account>','DatabaseName':db,'Name':t}})
+    iam = any(p.get('Principal',{}).get('DataLakePrincipalIdentifier','').endswith(':IAMAllowedPrincipals')
+              for p in r.get('PrincipalResourcePermissions', []))
+    print(f'{db}.{t}: IAM_ALLOWED_PRINCIPALS granted? {iam}')
+"
+# Expected: all three print 'False'.
+```
+
+If a new table is added to either database, run the same revoke command for that table — or add it to `scripts/lf_grants.py` and rerun with `--apply`.
+
+The original activation command (kept for reference, re-runnable as a no-op):
 
 ```bash
 aws lakeformation revoke-permissions \
@@ -53,10 +74,6 @@ aws lakeformation revoke-permissions \
   --permissions SELECT \
   --region ap-southeast-1
 ```
-
-The exact command is exported as `oActivationCommand` in the CloudFormation stack outputs.
-
-> **Important**: Until this command is run, IAM permissions continue to govern access and the column exclusions have no effect.
 
 ---
 

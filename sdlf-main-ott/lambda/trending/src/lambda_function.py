@@ -22,18 +22,22 @@ ANALYTICS_PREFIX = os.environ["ANALYTICS_PREFIX"]
 SNS_TOPIC_ARN    = os.environ["SNS_TOPIC_ARN"]
 MIN_GROWTH       = float(os.environ["MIN_GROWTH_MULTIPLIER"])
 MIN_VOLUME       = int(os.environ["MIN_SEARCH_VOLUME"])
+MAX_TRENDING_ROWS = int(os.environ.get("MAX_TRENDING_ROWS", "1000"))
+# IAM policy scopes athena:StartQueryExecution to workgroup/sdlf-ott; queries
+# without a WorkGroup default to 'primary' and fail with AccessDenied.
+WORKGROUP        = os.environ.get("ATHENA_WORKGROUP", "sdlf-ott")
 
 _TRENDING_SQL = """
 WITH current_window AS (
     SELECT keyword_norm, derived_genre, COUNT(*) AS current_cnt
     FROM {db}.curated
-    WHERE dt >= '{cur_start}' AND dt < '{cur_end}'
+    WHERE dt >= '{cur_start}' AND dt < '{cur_end}' AND keyword_norm IS NOT NULL AND keyword_norm != ''
     GROUP BY keyword_norm, derived_genre
 ),
 baseline_window AS (
     SELECT keyword_norm, derived_genre, COUNT(*) AS baseline_cnt
     FROM {db}.curated
-    WHERE dt >= '{base_start}' AND dt < '{base_end}'
+    WHERE dt >= '{base_start}' AND dt < '{base_end}' AND keyword_norm IS NOT NULL AND keyword_norm != ''
     GROUP BY keyword_norm, derived_genre
 )
 SELECT c.keyword_norm,
@@ -52,24 +56,24 @@ WHERE c.current_cnt >= {min_volume}
        OR CAST(c.current_cnt AS double) / b.baseline_cnt >= {min_growth})
 {genre_filter}
 ORDER BY c.current_cnt DESC
-LIMIT 1000
+LIMIT {max_rows}
 """
 
 _FALLBACK_SQL = """
 SELECT keyword_norm, derived_genre, COUNT(*) AS current_cnt,
        0 AS baseline_cnt, NULL AS growth_multiplier, true AS is_new_keyword
 FROM {db}.curated
-WHERE dt >= '{cur_start}' AND dt < '{cur_end}'
+WHERE dt >= '{cur_start}' AND dt < '{cur_end}' AND keyword_norm IS NOT NULL AND keyword_norm != ''
 {genre_filter}
 GROUP BY keyword_norm, derived_genre
 HAVING COUNT(*) >= {min_volume}
 ORDER BY current_cnt DESC
-LIMIT 1000
+LIMIT {max_rows}
 """
 
 _BASELINE_CHECK_SQL = """
 SELECT COUNT(*) AS cnt FROM {db}.curated
-WHERE dt >= '{base_start}' AND dt < '{base_end}'
+WHERE dt >= '{base_start}' AND dt < '{base_end}' AND keyword_norm IS NOT NULL AND keyword_norm != ''
 """
 
 # Gold-layer CTAS: per-keyword x platform x genre x date rankings.
@@ -99,6 +103,7 @@ WITH agg AS (
               / CAST(COUNT(*) AS double) * 100, 2)                        AS abandon_rate_pct,
         CAST(COUNT(DISTINCT user_id_hashed)                     AS bigint) AS unique_users
     FROM {curated_db}.curated
+    WHERE keyword_norm IS NOT NULL AND keyword_norm != ''
     GROUP BY keyword_norm, platform_group, derived_genre, dt
     HAVING COUNT(*) >= {min_volume}
 ),
@@ -170,6 +175,7 @@ def athena_query(sql):
         QueryString=sql,
         QueryExecutionContext={"Database": DB},
         ResultConfiguration={"OutputLocation": RESULTS},
+        WorkGroup=WORKGROUP,
     )
     qid = r["QueryExecutionId"]
     while True:
@@ -195,6 +201,7 @@ def athena_ddl(sql):
     r = athena.start_query_execution(
         QueryString=sql,
         ResultConfiguration={"OutputLocation": RESULTS},
+        WorkGroup=WORKGROUP,
     )
     qid = r["QueryExecutionId"]
     while True:
@@ -241,6 +248,7 @@ def run_trending_query(cur_start, cur_end, base_start, base_end, use_fallback, g
         sql = _FALLBACK_SQL.format(
             db=DB, cur_start=cur_start, cur_end=cur_end,
             min_volume=MIN_VOLUME, genre_filter=genre_filter,
+            max_rows=MAX_TRENDING_ROWS,
         )
     else:
         sql = _TRENDING_SQL.format(
@@ -248,25 +256,34 @@ def run_trending_query(cur_start, cur_end, base_start, base_end, use_fallback, g
             base_start=base_start, base_end=base_end,
             min_volume=MIN_VOLUME, min_growth=MIN_GROWTH,
             genre_filter=genre_filter,
+            max_rows=MAX_TRENDING_ROWS,
         )
     return athena_query(sql)
 
 
+def _list_s3_keys(s3_url):
+    bucket, prefix = s3_url.replace("s3://", "").split("/", 1)
+    keys = set()
+    for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            keys.add(obj["Key"])
+    return bucket, prefix, keys
+
+
 def _empty_s3_prefix(s3_url):
-    parts = s3_url.replace("s3://", "").split("/", 1)
-    bucket, prefix = parts[0], parts[1] if len(parts) > 1 else ""
-    paginator = s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-        keys = [{"Key": o["Key"]} for o in page.get("Contents", [])]
-        if keys:
-            s3.delete_objects(Bucket=bucket, Delete={"Objects": keys})
+    bucket, _, keys = _list_s3_keys(s3_url)
+    if keys:
+        batch = [{"Key": k} for k in keys]
+        for i in range(0, len(batch), 1000):
+            s3.delete_objects(Bucket=bucket, Delete={"Objects": batch[i:i+1000]})
 
 
 def _copy_s3_prefix(src_url, dst_url):
-    src_bucket, src_prefix = src_url.replace("s3://", "").split("/", 1)
+    """Copy src→dst, return set of destination keys written."""
+    src_bucket, src_prefix, _ = _list_s3_keys(src_url)
     dst_bucket, dst_prefix = dst_url.replace("s3://", "").split("/", 1)
-    paginator = s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=src_bucket, Prefix=src_prefix):
+    written = set()
+    for page in s3.get_paginator("list_objects_v2").paginate(Bucket=src_bucket, Prefix=src_prefix):
         for obj in page.get("Contents", []):
             src_key = obj["Key"]
             dst_key = dst_prefix + src_key[len(src_prefix):]
@@ -275,6 +292,8 @@ def _copy_s3_prefix(src_url, dst_url):
                 Bucket=dst_bucket,
                 Key=dst_key,
             )
+            written.add(dst_key)
+    return dst_bucket, written
 
 
 def _ctas(table_name, location):
@@ -308,11 +327,20 @@ def write_gold_table():
         _empty_s3_prefix(staging_location)
         raise RuntimeError("Staging CTAS produced 0 rows — gold table unchanged")
 
-    # Phase 2: Swap staging S3 data → production location.
-    # keyword_trends is a CFN-managed table with partition projection — no
-    # DROP/CTAS needed; Athena discovers partitions from S3 automatically.
-    _empty_s3_prefix(gold_location)
-    _copy_s3_prefix(staging_location, gold_location)
+    # Phase 2: Atomic swap — copy first, prune stale after.
+    # keyword_trends is a CFN-managed table with partition projection, so
+    # Athena discovers partitions from S3 automatically. The old pattern
+    # "empty production then copy" left a window where the gold table was
+    # empty mid-flight. New pattern: enumerate existing keys, copy all new
+    # keys (overwriting matching paths in place — each PutObject is atomic),
+    # then delete only the existing keys that the copy didn't replace.
+    _, _, before_keys = _list_s3_keys(gold_location)
+    dst_bucket, written_keys = _copy_s3_prefix(staging_location, gold_location)
+    stale = before_keys - written_keys
+    if stale:
+        batch = [{"Key": k} for k in stale]
+        for i in range(0, len(batch), 1000):
+            s3.delete_objects(Bucket=dst_bucket, Delete={"Objects": batch[i:i+1000]})
 
     # Phase 3: Cleanup staging.
     athena_ddl(f"DROP TABLE IF EXISTS {staging_table}")

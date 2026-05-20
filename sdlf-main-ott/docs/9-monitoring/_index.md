@@ -10,7 +10,7 @@ pre: <b>9. </b>
 
 **Source**: `pipeline-ott-monitoring.yaml`
 
-All pipeline observability is centralised in a single CloudWatch dashboard (`sdlf-ott-searchevents-pipeline`) with 12 alarms publishing to the OTT SNS notifications topic.
+All pipeline observability is centralised in a single CloudWatch dashboard (`sdlf-ott-searchevents-pipeline`) with 14 alarms publishing to the OTT SNS notifications topic.
 
 ---
 
@@ -35,7 +35,7 @@ The dashboard contains 10 metric widgets covering the full pipeline end-to-end.
 
 ## Alarms
 
-All alarms publish to the SNS topic resolved from `/SDLF/SNS/ott/Notifications`. Eleven alarms are defined:
+All alarms publish to the SNS topic resolved from `/SDLF/SNS/ott/Notifications`. Fourteen alarms are defined:
 
 | Alarm name | Metric | Threshold | Rationale |
 |---|---|---|---|
@@ -43,6 +43,9 @@ All alarms publish to the SNS topic resolved from `/SDLF/SNS/ott/Notifications`.
 | DQ SM failed | `ExecutionsFailed` (DQ SM) | ≥ 1 in 5 min | DQ failure means curated data is suspect; analytics should not run |
 | Stage A DLQ not empty | `ApproximateNumberOfMessagesVisible` (Stage A DLQ) | ≥ 1 | Event routing failure — file landed but pipeline did not start |
 | Stage B DLQ not empty | `ApproximateNumberOfMessagesVisible` (Stage B DLQ) | ≥ 1 | Stage B routing failure |
+| Trending DLQ not empty | `ApproximateNumberOfMessagesVisible` (`sdlf-ott-mainTR-dlq`) | ≥ 1 | Gold-table CTAS or Athena write failed and won't auto-retry past 1 attempt |
+| Content Gap DLQ not empty | `ApproximateNumberOfMessagesVisible` (`sdlf-ott-mainCG-dlq`) | ≥ 1 | Daily report Lambda failed and dead-lettered |
+| LUT Refresh DLQ not empty | `ApproximateNumberOfMessagesVisible` (`sdlf-ott-mainLUT-dlq`) | ≥ 1 | Classifier-zip rebuild failed; next Glue run will use the previous LUT |
 | Stage B SM duration > 60 min | `ExecutionTime` p90 (Stage B SM) | > 3,600,000 ms | Glue job runtime regression or data volume spike |
 | LUT Refresh errors | `Errors` (LUT Refresh Lambda) | ≥ 1 in 5 min | Bedrock classification failure or S3 write failure |
 | LUT Refresh duration > 720 s | `Duration` p90 (LUT Refresh Lambda) | > 720,000 ms | 80 % of the 900 s Lambda timeout — early warning before hard timeout |
@@ -66,7 +69,7 @@ Five SQS DLQs capture failed event deliveries (not Lambda failures — those go 
 | `sdlf-ott-mainLUT-dlq` | LUT Refresh Lambda invocation failures | 14 days |
 | `sdlf-ott-mainTR-dlq` | Trending Lambda invocation failures | 14 days |
 
-All DLQs use KMS encryption (shared OTT KMS key). The DLQ-not-empty alarms fire within 5 minutes of a message landing, so failures are visible before the next pipeline run.
+All DLQs use KMS encryption (shared OTT KMS key). Every DLQ has a depth alarm — Stage A/B + all three analytics Lambdas (TR/CG/LUT) — so a failed message is visible within 5 minutes of landing, before the next pipeline run.
 
 ---
 
