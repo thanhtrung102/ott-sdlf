@@ -151,6 +151,17 @@ Resources:
                 Resource:
                   - !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/26f9e159-723a-4d6b-bc63-7f8a745f88e6
                   - !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/5ce12d85-6891-4b70-b225-0471ef278219
+              # S3 writes for the same staging step. Scoped to the exact prefixes
+              # the buildspec touches: the Glue script under ott/searchevents/ of
+              # the project bucket, and lambda/*.zip in the SDLF artifacts bucket.
+              - Sid: BucketWritesForStaging
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::ott-search-${AWS::AccountId}-prod/ott/searchevents/*
+                  - !Sub arn:${AWS::Partition}:s3:::fpt-ott-${AWS::Region}-${AWS::AccountId}-artifacts-prod/lambda/*
               - Sid: SSM
                 Effect: Allow
                 Action:
