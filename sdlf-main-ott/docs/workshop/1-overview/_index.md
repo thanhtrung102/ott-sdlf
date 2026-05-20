@@ -34,10 +34,10 @@ This pipeline consumes 14 AWS services. Skim the table; you'll see each one in a
 | Service | Why this pipeline needs it |
 |---|---|
 | **Amazon S3** | Four buckets — raw / stage / analytics / artifacts — partitioned the medallion way: raw (immutable), curated (enriched), gold (pre-computed). |
-| **AWS Lake Formation** | Column-level RBAC on the `curated` table. `IAM_ALLOWED_PRINCIPALS` is revoked, so every read goes through LF. |
+| **AWS Lake Formation** | Column-level RBAC on the `curated` table. Once `IAM_ALLOWED_PRINCIPALS` is revoked (chapter 3.5), every read goes through LF. |
 | **AWS Glue** | (a) The 4.0 / Spark 3.3 ETL job, G.1X × 10 workers, ~25 min for the 14-day set; (b) the catalog hosting `raw_search_events`, `curated`, `keyword_trends`, `dq_results`, and the 5 content-gap report tables. |
 | **AWS Glue Data Quality** | Two ruleset evaluations — one over the curated table (post-Stage B), one over the gold table (post-Trending Lambda). |
-| **AWS Step Functions** | Three state machines (`mainA` event routing, `mainB` Glue orchestration, `mainDQ` + `mainGoldDQ` quality gates). |
+| **AWS Step Functions** | Four state machines (`mainA` event routing, `mainB` Glue orchestration, `mainDQ` + `mainGoldDQ` quality gates). |
 | **Amazon EventBridge** | Routes S3 ObjectCreated → Stage A; chains `Stage A SUCCEEDED` → `Stage B`; fans `DQ SUCCEEDED` to the three analytics Lambdas. |
 | **AWS Lambda** | Four Python 3.12 functions — `mainTR-report`, `mainCG-report`, `mainLUT-refresh` (x86_64, on the SDLF datalake-library Layer) + `sdlf-ott-api` (arm64, no Layer). All four have X-Ray active tracing. |
 | **Amazon API Gateway (HTTP API v2)** | `GET /trending` and `GET /content-gaps`. Auth via in-Lambda `x-api-key` check (the key is in SSM at `/sdlf/ott/api-key/prod`). |

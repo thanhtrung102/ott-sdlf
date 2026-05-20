@@ -17,7 +17,7 @@ The repo already has CI/CD set up — that's the recommended deploy path. You pu
 | **A. CI/CD (`sdlf-ott-cicd` CodePipeline)** ✓ recommended | Every routine deploy. Push to `main`, walk away, watch CodePipeline. |
 | **B. Local PowerShell (`ott-pipeline.ps1`)** | First-time bootstrap before CI/CD exists, or rapid iteration when you don't want to wait on a git push. |
 
-This chapter walks path A. Path B is at section 3.7 for the bootstrap / iteration case.
+This chapter walks path A. Path B is at section 3.8 for the bootstrap / iteration case.
 
 ---
 
@@ -122,48 +122,53 @@ aws codepipeline get-pipeline-state --name sdlf-ott-cicd --region ap-southeast-1
 
 ## 3.5 Activate Lake Formation column-level RBAC
 
-The Lake Formation grants are declared in `pipeline-ott-lakeformation.yaml` but stay dormant until you revoke `IAM_ALLOWED_PRINCIPALS` on each protected table.
+`pipeline-ott-lakeformation.yaml` declares column-level grants on the `curated` table, but they stay **dormant** until the default `IAM_ALLOWED_PRINCIPALS` grant is revoked. Two steps.
 
-> ⚠️ **WARNING:** Running this script immediately restricts access on `curated`, `raw_search_events`, `dq_results`, and `keyword_trends` to the 7 explicitly-granted principals. Any other role that previously read these tables via IAM will lose access.
+**Step 1 — pre-grant the admin + CI/CD principals.** `lf_grants.py` grants `ALL` on every OTT table to `terraform-admin` and `sdlf-ott-cicd-codebuild`, so neither loses access after the revoke (and so the next CI/CD deploy doesn't fail with an LF permission error). It does *not* revoke anything — that's step 2.
 
 ```powershell
 python D:\ott-sdlf\scripts\lf_grants.py --apply
 ```
 
-**Expected output**:
+**Expected output** (one line per table × principal; counts depend on how many catalog tables exist — 10 analytics + 2 gold = 24 grants today):
 
 ```
-=== fpt_ott_searchevents_analytics (3 tables) ===
+=== fpt_ott_searchevents_analytics (10 tables) ===
   OK   ALL on curated -> terraform-admin
   OK   ALL on curated -> sdlf-ott-cicd-codebuild
-  OK   ALL on raw_search_events -> terraform-admin
-  OK   ALL on raw_search_events -> sdlf-ott-cicd-codebuild
-  OK   ALL on dq_results -> terraform-admin
-  OK   ALL on dq_results -> sdlf-ott-cicd-codebuild
-
-=== fpt_ott_searchevents_gold (1 tables) ===
+  ... (one pair per table)
+=== fpt_ott_searchevents_gold (2 tables) ===
   OK   ALL on keyword_trends -> terraform-admin
-  OK   ALL on keyword_trends -> sdlf-ott-cicd-codebuild
+  ... (one pair per table)
 
-Summary: granted=8 failed=0
+Summary: granted=24 failed=0
 ```
 
-**Verify enforcement** — `IAM_ALLOWED_PRINCIPALS` must NOT be in the grant list of any protected table:
+**Step 2 — revoke `IAM_ALLOWED_PRINCIPALS` on `curated`.** The exact command, with the account ID and database already substituted, is published as the `oActivationCommand` output of the Lake Formation stack:
 
-```python
-python -c "
-import boto3
-lf = boto3.client('lakeformation', region_name='ap-southeast-1')
-for db, t in [('fpt_ott_searchevents_analytics','curated'),
-              ('fpt_ott_searchevents_gold','keyword_trends')]:
-    r = lf.list_permissions(Resource={'Table':{'CatalogId':'<your-account>','DatabaseName':db,'Name':t}})
-    iam = any(p.get('Principal',{}).get('DataLakePrincipalIdentifier','').endswith(':IAMAllowedPrincipals')
-              for p in r.get('PrincipalResourcePermissions', []))
-    print(f'{db}.{t}: IAM_ALLOWED_PRINCIPALS granted? {iam}')
-"
+```powershell
+aws cloudformation describe-stacks --stack-name sdlf-pipeline-ott-lakeformation `
+  --region ap-southeast-1 `
+  --query "Stacks[0].Outputs[?OutputKey=='oActivationCommand'].OutputValue" --output text
 ```
 
-**Expected**: all entries print `False`.
+It prints the revoke command — run what it gives you:
+
+```
+aws lakeformation revoke-permissions --principal '{"DataLakePrincipalIdentifier":"IAM_ALLOWED_PRINCIPALS"}' --resource '{"Table":{"CatalogId":"<account>","DatabaseName":"fpt_ott_searchevents_analytics","Name":"curated"}}' --permissions SELECT --region ap-southeast-1
+```
+
+> ⚠️ **WARNING:** Once revoked, only the principals explicitly granted in the Lake Formation stack can read `curated`. Any role that previously read it via plain IAM loses access.
+
+**Verify enforcement** — `IAM_ALLOWED_PRINCIPALS` must be gone from `curated`:
+
+```powershell
+aws lakeformation list-permissions --region ap-southeast-1 `
+  --resource '{\"Table\":{\"CatalogId\":\"<account>\",\"DatabaseName\":\"fpt_ott_searchevents_analytics\",\"Name\":\"curated\"}}' `
+  --query "PrincipalResourcePermissions[?Principal.DataLakePrincipalIdentifier=='IAM_ALLOWED_PRINCIPALS'] | length(@)" --output text
+```
+
+**Expected**: `0`. If it returns `1`, step 2 didn't apply — re-run it. Chapter 7 §7.3 checks this on the reference deployment (where, by default, it has not yet been run).
 
 ---
 
