@@ -31,9 +31,18 @@ All three Lambdas finish within ~5 minutes total of wall-clock time after `DQ SU
 
 ## 5.5.2 Trending Lambda — week-over-week growth
 
+The three Lambda invocations in §5.5.2–§5.5.4 share a payload. Write it to a file once — that sidesteps PowerShell's quote stripping on native CLI args *and* AWS CLI v2's default base64 expectation for inline `--payload` strings (CLI v2 raises `Invalid base64` on the raw JSON).
+
+```powershell
+'{"source":"workshop","detail-type":"Manual Trigger"}' |
+  Out-File -Encoding ASCII -NoNewline C:\tmp\lambda-payload.json
+```
+
+Then invoke Trending:
+
 ```powershell
 aws lambda invoke --function-name sdlf-ott-mainTR-report --region ap-southeast-1 `
-  --cli-read-timeout 0 --payload '{"source":"workshop","detail-type":"Manual Trigger"}' `
+  --cli-read-timeout 0 --payload fileb://C:\tmp\lambda-payload.json `
   C:\tmp\trending-out.json
 Get-Content C:\tmp\trending-out.json
 ```
@@ -80,7 +89,7 @@ gold_rows    unique_keywords
 
 ```powershell
 aws lambda invoke --function-name sdlf-ott-mainCG-report --region ap-southeast-1 `
-  --cli-read-timeout 0 --payload '{"source":"workshop","detail-type":"Manual Trigger"}' `
+  --cli-read-timeout 0 --payload fileb://C:\tmp\lambda-payload.json `
   C:\tmp\cg-out.json
 Get-Content C:\tmp\cg-out.json
 ```
@@ -113,7 +122,7 @@ Get-Content C:\tmp\cg-out.json
 
 ```powershell
 aws lambda invoke --function-name sdlf-ott-mainLUT-refresh --region ap-southeast-1 `
-  --invocation-type Event --payload '{"source":"workshop","detail-type":"Manual Trigger"}' `
+  --invocation-type Event --payload fileb://C:\tmp\lambda-payload.json `
   C:\tmp\lut-out.json
 Write-Host "LUT refresh fired asynchronously. Watch CloudWatch /aws/lambda/sdlf-ott-mainLUT-refresh."
 ```

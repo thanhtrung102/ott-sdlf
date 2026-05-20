@@ -177,6 +177,8 @@ aws s3 ls "s3://$ANALYTICS/ott/searchevents/curated/dt=2022-06-22/" --region ap-
 
 Each `(dt, derived_genre)` directory contains exactly **1 Parquet file of ~1 MB**, thanks to the `repartition(dt, derived_genre)` shuffle in the Glue script.
 
+> `derived_genre=EMPTY_QUERY/` may be absent from a given `dt=` partition if that day's input had no events with an empty keyword string. Live verification of `dt=2022-06-22` shows 9 of the 10 genres present, no `EMPTY_QUERY/`; older partitions like `dt=2022-06-01` have all 10.
+
 ---
 
 ## 5.4.6 DQ state machine — quality gate (~3 min)
