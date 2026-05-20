@@ -2,15 +2,16 @@ baseURL = "https://thanhtrung102.github.io/ott-sdlf/"
 relativeURLs = true
 canonifyURLs = true
 
-theme = "hugo-theme-relearn"
+theme = "hugo-theme-learn"
 contentDir = "docs"
 
 [outputs]
-home = ["HTML", "RSS", "JSON"]
+home = [ "HTML", "RSS", "JSON"]
 
 [params]
-  themeVariant = ["fcj-workshop", "relearn-dark"]
+  themeVariant = "workshop"
   editURL = ""
+  description = "OTT Search Analytics Pipeline — AWS SDLF FCJ Workshop"
   author = ""
   showVisitedLinks = true
   disableBreadcrumb = false
@@ -20,7 +21,7 @@ home = ["HTML", "RSS", "JSON"]
 [Languages.en]
 title = "OTT Search Analytics Pipeline"
 weight = 1
-label = "English"
+languageName = "English"
 
 [markup]
   [markup.goldmark]
