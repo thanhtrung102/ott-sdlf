@@ -37,7 +37,7 @@ Eleven CloudFormation stacks, in dependency order:
 11. sdlf-pipeline-ott-api            — HTTP API (x-api-key, freshness headers, arm64)
 ```
 
-The deploy script handles ordering and parameter wiring automatically.
+The deploy path handles artifact staging, stack ordering, and parameter wiring automatically.
 
 ---
 
@@ -53,7 +53,8 @@ That's it. The CodePipeline picks up the push within ~30 seconds and runs four s
 ```
 Source   → CodeStar connection pulls the commit
 Validate → CodeBuild runs cfn-lint on every pipeline-ott-*.yaml
-Deploy   → CodeBuild runs `aws cloudformation deploy` for each of 11 stacks
+Deploy   → CodeBuild stages the Glue script + Lambda zips to S3, runs
+           `aws cloudformation deploy` for each of 11 stacks, then pushes live Lambda code
 Notify   → Lambda publishes the success/failure summary to SNS
 ```
 
@@ -239,11 +240,11 @@ Time: ~15 min for first deploy; ~5 min for subsequent runs (no-op CFN updates).
 
 ```
 === Deploy stacks ===
-  uploading Glue script to s3://...-artifacts-prod/ott/searchevents/ ...
+  uploading Glue script to s3://ott-search-...-prod/ott/searchevents/ ...
   packaging analytics Lambdas to s3://...-artifacts-prod/lambda/ ...
-[contentgap] uploaded ... (4823 bytes)
+[contentgap] uploaded ... (3988 bytes)
 [trending]   uploaded ... (4964 bytes)
-[lutrefresh] uploaded ... (3204 bytes)
+[lutrefresh] uploaded ... (3263 bytes)
 [api]        uploaded ... (1532 bytes)
   deploying sdlf-ott-searchevents-glue-job ... OK
   deploying sdlf-pipeline-ott-mainA ........ OK
@@ -251,7 +252,7 @@ Time: ~15 min for first deploy; ~5 min for subsequent runs (no-op CFN updates).
   [OK]   All 11 stacks deployed
 ```
 
-`ott-pipeline.ps1` does what the CI/CD buildspec does, plus ingests one raw file and runs the analytics Lambdas — useful for end-to-end iteration in one command. Both paths deploy identical CloudFormation.
+`ott-pipeline.ps1` does what the CI/CD buildspec does, plus ingests one raw file and runs the analytics Lambdas — useful for end-to-end iteration in one command. Both paths stage the same artifacts and deploy identical CloudFormation.
 
 ---
 

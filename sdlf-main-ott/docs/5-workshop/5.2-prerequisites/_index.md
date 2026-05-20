@@ -127,35 +127,31 @@ If any value is empty, the corresponding foundation stack didn't deploy or didn'
 
 ## 5.2.5 The genre-classifier zip and Glue script
 
-The Glue ETL job loads its `.py` script and a Python `--extra-py-files` zip from a project-specific bucket — `ott-search-${AWS::AccountId}-prod` — separate from the SDLF artifacts bucket. (This split exists because the Glue execution role's S3 GetObject permission is scoped to that bucket and to the team/dataset prefix of the SDLF artifacts bucket; the script + zip live at `ott/searchevents/` directly in the project bucket. Aligning everything onto the SDLF artifacts bucket would require an IAM-policy + bucket-policy change. See workshop bug log for context.)
+The Glue ETL job loads two files from a project-specific bucket — `ott-search-${AWS::AccountId}-prod`, separate from the SDLF artifacts bucket: its `.py` script and a Python `--extra-py-files` classifier zip. (The split exists because the Glue execution role's S3 GetObject permission is scoped to that bucket's `ott/searchevents/` prefix.)
 
-Both files must exist at the exact paths shown below or the Glue job fails with `LAUNCH ERROR | Error downloading from S3 ... key does not exist (404)`.
+Of the two, **only the classifier zip is a manual prerequisite.** The Glue `.py` script is staged automatically by whichever deploy path you use — the CI/CD `buildspec-deploy.yml` and `ott-pipeline.ps1` both `aws s3 cp` it from the repo before the Glue-job stack deploys. The classifier zip is a binary that is *not* tracked in the repo, so no deploy path can stage it for you — you must upload it once, up front.
 
-**Bootstrap both files** (one-time):
+**Bootstrap the classifier zip** (one-time):
 
 ```powershell
 $REGION = "ap-southeast-1"
 $ACCT   = aws sts get-caller-identity --query Account --output text
 $GLUEBK = "ott-search-$ACCT-prod"
 
-aws s3 cp "D:\ott-sdlf\sdlf-main-ott\glue\ott-search-glue-job.py" `
-  "s3://$GLUEBK/ott/searchevents/ott-search-glue-job.py" --region $REGION
-
 aws s3 cp "D:\ott-sdlf\genre_classifier_pkg.zip" `
   "s3://$GLUEBK/ott/searchevents/genre_classifier_pkg.zip" --region $REGION
 ```
 
+If the classifier zip is missing, the Glue job fails at launch with `LAUNCH ERROR | Error downloading from S3 ... key does not exist (404)`.
+
 > The LUT-Refresh Lambda also writes the refreshed classifier to the SDLF artifacts bucket (`/sdlf/storage/rArtifactsBucket/prod`) after each successful classification batch. The Glue job does **not** read that copy — it always reads from `ott-search-${ACCT}-prod`. If you replace the classifier manually, copy it to the Glue path above.
 
-**Verify**:
+**Verify** — only the classifier zip is checked here; the Glue `.py` script will not exist in S3 until the 5.3 deploy stages it:
 
 ```powershell
-$ACCT   = aws sts get-caller-identity --query Account --output text
+$ACCT = aws sts get-caller-identity --query Account --output text
 aws s3api head-object --bucket "ott-search-$ACCT-prod" `
   --key ott/searchevents/genre_classifier_pkg.zip --region ap-southeast-1 `
-  --query "{Size:ContentLength, Modified:LastModified}" --output table
-aws s3api head-object --bucket "ott-search-$ACCT-prod" `
-  --key ott/searchevents/ott-search-glue-job.py --region ap-southeast-1 `
   --query "{Size:ContentLength, Modified:LastModified}" --output table
 ```
 
@@ -166,11 +162,6 @@ aws s3api head-object --bucket "ott-search-$ACCT-prod" `
 | Size      | Modified                |
 |-----------|-------------------------|
 | 944698    | 2026-05-20T07:16:29+00 |
----------------------------------------
----------------------------------------
-| Size      | Modified                |
-|-----------|-------------------------|
-| 17067     | 2026-05-20T08:13:51+00 |
 ---------------------------------------
 ```
 
@@ -245,7 +236,7 @@ Before continuing, confirm all of these:
 - [ ] Deploying principal is a Lake Formation administrator.
 - [ ] Bedrock Claude Haiku 4.5 model access granted.
 - [ ] SDLF foundation/team/dataset stacks deployed; SSM paths resolve.
-- [ ] `genre_classifier_pkg.zip` uploaded to artifacts bucket.
+- [ ] `genre_classifier_pkg.zip` uploaded to the Glue bucket (`ott-search-…-prod`).
 - [ ] API key stored in `/sdlf/ott/api-key/prod`.
 - [ ] 14 raw Parquet partitions copied into raw bucket.
 
