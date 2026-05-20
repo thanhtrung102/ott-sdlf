@@ -8,14 +8,14 @@ pre: <b>3. </b>
 
 # 3. Deploy
 
-Two equivalent deploy paths:
+The repo already has CI/CD set up — that's the recommended deploy path. You push to `main` and the `sdlf-ott-cicd` CodePipeline takes care of validating + deploying every CloudFormation stack in dependency order.
 
 | Path | Use when |
 |---|---|
-| **A. CI/CD (`sdlf-ott-cicd` CodePipeline)** | You've pushed your branch to GitHub and the connection is configured. Hands-off. |
-| **B. Local PowerShell (`ott-pipeline.ps1`)** | You want full control, are iterating, or don't want to wait on GitHub. |
+| **A. CI/CD (`sdlf-ott-cicd` CodePipeline)** ✓ recommended | Every routine deploy. Push to `main`, walk away, watch CodePipeline. |
+| **B. Local PowerShell (`ott-pipeline.ps1`)** | First-time bootstrap before CI/CD exists, or rapid iteration when you don't want to wait on a git push. |
 
-This chapter walks path B (faster for first-time workshop runs). Path A is described at the end.
+This chapter walks path A. Path B is at section 3.7 for the bootstrap / iteration case.
 
 ---
 
@@ -41,43 +41,84 @@ The deploy script handles ordering and parameter wiring automatically.
 
 ---
 
-## 3.2 Run the deploy
-
-From the repo root:
+## 3.2 Trigger the deploy via git push
 
 ```powershell
-.\ott-pipeline.ps1
+cd D:\ott-sdlf
+git push origin main
 ```
 
-Time: ~15 minutes for first deploy (~5 min for subsequent runs since most stacks are no-op).
-
-**Expected output (truncated to one stack per group)**:
+That's it. The CodePipeline picks up the push within ~30 seconds and runs four stages:
 
 ```
-=== Deploy stacks ===
-  uploading Glue script to s3://fpt-ott-ap-southeast-1-703668403514-artifacts-prod/ott/searchevents/ ...
-  packaging analytics Lambdas to s3://fpt-ott-ap-southeast-1-703668403514-artifacts-prod/lambda/ ...
-[contentgap] uploaded s3://...-artifacts-prod/lambda/contentgap.zip (4823 bytes, sha256=...)
-[trending] uploaded s3://...-artifacts-prod/lambda/trending.zip (4964 bytes, sha256=...)
-[lutrefresh] uploaded s3://...-artifacts-prod/lambda/lutrefresh.zip (3204 bytes, sha256=...)
-[api] uploaded s3://...-artifacts-prod/lambda/api.zip (1532 bytes, sha256=...)
-  deploying sdlf-ott-searchevents-glue-job ... OK
-  deploying sdlf-pipeline-ott-mainA ........ OK
-  deploying sdlf-pipeline-ott-mainB ........ OK
-  deploying sdlf-pipeline-ott-dataquality .. OK
-  deploying sdlf-pipeline-ott-lutrefresh ... OK
-  deploying sdlf-pipeline-ott-contentgap ... OK
-  deploying sdlf-pipeline-ott-trending ..... OK
-  deploying sdlf-pipeline-ott-goldquality .. OK
-  deploying sdlf-pipeline-ott-monitoring ... OK
-  deploying sdlf-pipeline-ott-lakeformation OK
-  deploying sdlf-pipeline-ott-api .......... OK
-  [OK]   All 11 stacks deployed
+Source   → CodeStar connection pulls the commit
+Validate → CodeBuild runs cfn-lint on every pipeline-ott-*.yaml
+Deploy   → CodeBuild runs `aws cloudformation deploy` for each of 11 stacks
+Notify   → Lambda publishes the success/failure summary to SNS
+```
+
+**Total time**: ~15 min for the deploy stage (each `cloudformation deploy` waits for stack completion); ~30 s each for the other stages.
+
+---
+
+## 3.3 Watch the pipeline run
+
+```powershell
+aws codepipeline get-pipeline-state --name sdlf-ott-cicd --region ap-southeast-1 `
+  --query "stageStates[].{Stage:stageName, Status:latestExecution.status}" --output table
+```
+
+**Expected output during a run** (status moves left-to-right over ~15 min):
+
+```
+---------------------------------
+| Stage    | Status              |
+|----------|---------------------|
+| Source   | Succeeded           |
+| Validate | Succeeded           |
+| Deploy   | InProgress          |   ← watch this one
+| Notify   | (previous Succeeded) |
+---------------------------------
+```
+
+Or tail the CodeBuild logs for the Deploy stage directly:
+
+```powershell
+$BUILD_ID = aws codebuild list-builds-for-project --project-name sdlf-ott-cicd-deploy `
+  --region ap-southeast-1 --query "ids[0]" --output text
+aws codebuild batch-get-builds --ids $BUILD_ID --region ap-southeast-1 `
+  --query "builds[0].{status:buildStatus, phases:currentPhase}" --output table
+```
+
+**Expected**: `status: IN_PROGRESS, phases: BUILD` while running; `status: SUCCEEDED` when done.
+
+---
+
+## 3.4 When the pipeline succeeds
+
+You'll receive an SNS notification at the email subscribed to `sdlf-ott-cicd-notifications`. Or check directly:
+
+```powershell
+aws codepipeline get-pipeline-state --name sdlf-ott-cicd --region ap-southeast-1 `
+  --query "stageStates[].{Stage:stageName, Status:latestExecution.status}" --output table
+```
+
+**Expected (all green)**:
+
+```
+---------------------------------
+| Stage    | Status              |
+|----------|---------------------|
+| Source   | Succeeded           |
+| Validate | Succeeded           |
+| Deploy   | Succeeded           |
+| Notify   | Succeeded           |
+---------------------------------
 ```
 
 ---
 
-## 3.3 Activate Lake Formation column-level RBAC
+## 3.5 Activate Lake Formation column-level RBAC
 
 The Lake Formation grants are declared in `pipeline-ott-lakeformation.yaml` but stay dormant until you revoke `IAM_ALLOWED_PRINCIPALS` on each protected table.
 
@@ -122,7 +163,7 @@ for db, t in [('fpt_ott_searchevents_analytics','curated'),
 
 ---
 
-## 3.4 Sanity-check what's deployed
+## 3.6 Sanity-check what's deployed
 
 ```powershell
 aws cloudformation list-stacks --region ap-southeast-1 `
@@ -155,7 +196,7 @@ sdlf-pipeline-ott-trending
 
 ---
 
-## 3.5 Read the live state — what the deploy gave you
+## 3.7 Read the live state — what the deploy gave you
 
 ```powershell
 # API base URL (you'll use it in chapter 5)
@@ -173,33 +214,36 @@ aws glue get-job --job-name sdlf-ott-searchevents-glue-job --region ap-southeast
 
 ---
 
-## 3.6 (Alternative) Deploy via CI/CD
+## 3.8 (Alternative) Deploy without CI/CD — local PowerShell
 
-If you have GitHub access:
-
-1. Push your branch to `main`.
-2. The `sdlf-ott-cicd` CodePipeline auto-triggers: Source → Validate (cfn-lint) → Deploy → Notify.
-3. Watch in the AWS console at CodePipeline → `sdlf-ott-cicd` → View pipeline.
-
-**Verify a successful run**:
+For first-time bootstrap (before CI/CD exists in the account) or rapid iteration when waiting on a git push isn't acceptable:
 
 ```powershell
-aws codepipeline get-pipeline-state --name sdlf-ott-cicd --region ap-southeast-1 `
-  --query "stageStates[].{Stage:stageName, Status:latestExecution.status}" --output table
+cd D:\ott-sdlf
+.\ott-pipeline.ps1
 ```
 
-**Expected**:
+Time: ~15 min for first deploy; ~5 min for subsequent runs (no-op CFN updates).
+
+**Expected output (truncated)**:
 
 ```
----------------------------------
-| Stage    | Status              |
-|----------|---------------------|
-| Source   | Succeeded           |
-| Validate | Succeeded           |
-| Deploy   | Succeeded           |
-| Notify   | Succeeded           |
----------------------------------
+=== Deploy stacks ===
+  uploading Glue script to s3://...-artifacts-prod/ott/searchevents/ ...
+  packaging analytics Lambdas to s3://...-artifacts-prod/lambda/ ...
+[contentgap] uploaded ... (4823 bytes)
+[trending]   uploaded ... (4964 bytes)
+[lutrefresh] uploaded ... (3204 bytes)
+[api]        uploaded ... (1532 bytes)
+  deploying sdlf-ott-searchevents-glue-job ... OK
+  deploying sdlf-pipeline-ott-mainA ........ OK
+  ... (all 11 stacks)
+  [OK]   All 11 stacks deployed
 ```
+
+`ott-pipeline.ps1` does what the CI/CD buildspec does, plus it ingests one raw file and waits for Stage A → B → DQ, plus runs the analytics Lambdas — useful for end-to-end iteration in one command.
+
+The CI/CD path (3.2) and the PowerShell path (3.8) deploy IDENTICAL CloudFormation; the buildspec and `ott-pipeline.ps1` share the same stack list, the same parameter overrides, and the same dependency order.
 
 ---
 

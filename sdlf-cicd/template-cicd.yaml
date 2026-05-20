@@ -299,6 +299,7 @@ Resources:
                 Effect: Allow
                 Action:
                   - glue:CreateDatabase
+                  - glue:UpdateDatabase    # required for CFN no-op updates on Glue::Database resources (workshop deploy on 2026-05-20 failed without this)
                   - glue:DeleteDatabase
                   - glue:CreateTable
                   - glue:UpdateTable
