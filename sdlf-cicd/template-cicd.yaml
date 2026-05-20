@@ -138,6 +138,19 @@ Resources:
                   - kms:Decrypt
                   - kms:GenerateDataKey
                 Resource: !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/fe3a491b-60ab-4b3d-8792-f518d4cf587f
+              # Needed by the Deploy buildspec's artifact-staging step:
+              #   * aws s3 cp Glue script → ott-search-*-prod (key 5ce12d85)
+              #   * package_and_deploy_lambdas.py PutObject → SDLF artifacts (key 26f9e159)
+              # The bucket-key key policies use the standard "root" idiom which
+              # delegates — identity-based grants are still required.
+              - Sid: BucketDataKeysForStaging
+                Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource:
+                  - !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/26f9e159-723a-4d6b-bc63-7f8a745f88e6
+                  - !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/5ce12d85-6891-4b70-b225-0471ef278219
               - Sid: SSM
                 Effect: Allow
                 Action:
