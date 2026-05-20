@@ -9,7 +9,7 @@ contentDir = "docs"
 home = ["HTML", "RSS", "JSON"]
 
 [params]
-  themeVariant = "relearn-light"
+  themeVariant = ["fcj-workshop", "relearn-dark"]
   editURL = ""
   author = ""
   showVisitedLinks = true

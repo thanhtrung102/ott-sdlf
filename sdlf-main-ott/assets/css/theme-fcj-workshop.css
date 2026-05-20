@@ -1,0 +1,39 @@
+:root {
+  /* fcj-workshop — AWS First Cloud Journey workshop palette
+     squid-ink navy sidebar, white content, marigold-orange accents */
+  --PRIMARY-color: rgba( 255, 153, 0, 1 );          /* AWS marigold — buttons, active states */
+  --PRIMARY-HOVER-color: rgba( 236, 114, 17, 1 );   /* darker orange on hover */
+  --SECONDARY-color: rgba( 0, 115, 187, 1 );        /* AWS link blue */
+  --SECONDARY-HOVER-color: rgba( 0, 86, 140, 1 );   /* darker blue on hover */
+  --ACCENT-color: rgba( 255, 153, 0, 1 );           /* search highlight */
+  --ACCENT-HOVER-color: rgba( 236, 114, 17, 1 );
+  --MENU-HEADER-color: rgba( 35, 47, 62, 1 );       /* squid ink */
+  --MENU-SEARCH-color: rgba( 224, 228, 232, 1 );
+  --MENU-SEARCH-BG-color: rgba( 25, 34, 45, 1 );
+  --MENU-SEARCH-BORDER-color: rgba( 70, 84, 99, 1 );
+  --MENU-HOME-LINK-color: rgba( 208, 213, 221, 1 );
+  --MENU-HOME-LINK-HOVER-color: rgba( 255, 153, 0, 1 );
+  --MENU-SECTIONS-BG-color: rgba( 35, 47, 62, 1 );          /* squid-ink navy sidebar */
+  --MENU-SECTIONS-ACTIVE-BG-color: rgba( 25, 34, 45, 1 );   /* darker navy for active section */
+  --MENU-SECTIONS-LINK-color: rgba( 208, 213, 221, 1 );
+  --MENU-SECTIONS-LINK-HOVER-color: rgba( 255, 255, 255, 1 );
+  --MENU-SECTION-ACTIVE-CATEGORY-color: rgba( 35, 47, 62, 1 );
+  --MENU-SECTION-SEPARATOR-color: rgba( 70, 84, 99, 1 );
+  --MAIN-BG-color: rgba( 255, 255, 255, 1 );
+  --MAIN-TEXT-color: rgba( 28, 33, 39, 1 );
+  --MAIN-TITLES-TEXT-color: rgba( 35, 47, 62, 1 );  /* navy headings — AWS-docs style */
+  --CODE-theme: relearn-light;
+  --CODE-BLOCK-color: rgba( 39, 40, 34, 1 );
+  --CODE-BLOCK-BG-color: rgba( 247, 248, 249, 1 );
+  --CODE-BLOCK-BORDER-color: rgba( 216, 220, 224, 1 );
+  --CODE-INLINE-color: rgba( 197, 78, 0, 1 );
+  --CODE-INLINE-BG-color: rgba( 255, 248, 235, 1 );
+  --CODE-INLINE-BORDER-color: rgba( 248, 226, 190, 1 );
+  --BROWSER-theme: light;
+  --MERMAID-theme: default;
+  --OPENAPI-theme: light;
+  --OPENAPI-CODE-theme: idea;
+  --BOX-CAPTION-color: rgba( 255, 255, 255, 1 );
+  --BOX-BG-color: rgba( 255, 255, 255, .833 );
+  --BOX-TEXT-color: rgba( 16, 16, 16, 1 );
+}
