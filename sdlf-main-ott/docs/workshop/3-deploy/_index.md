@@ -172,7 +172,7 @@ aws cloudformation list-stacks --region ap-southeast-1 `
   --output text
 ```
 
-**Expected** — the 11 top-level OTT stacks below, plus 4 SDLF MODULE nested stacks (one each for the Stage A and Stage B framework constructs). The framework's `awslabs::sdlf::stageA::MODULE` and `stageB::MODULE` resolve to nested CloudFormation stacks that show up with random-suffix names:
+**Expected** — 11 top-level OTT stacks + 4 SDLF MODULE nested stacks (created automatically by the Stage A/B MODULE constructs; do not deploy them directly):
 
 ```
 sdlf-ott-searchevents-glue-job
@@ -192,7 +192,7 @@ sdlf-pipeline-ott-monitoring
 sdlf-pipeline-ott-trending
 ```
 
-15 names total — 11 OTT-managed + 4 nested. The nested ones are created automatically by the MODULE construct; you don't deploy them directly.
+15 names total.
 
 ---
 
@@ -241,9 +241,7 @@ Time: ~15 min for first deploy; ~5 min for subsequent runs (no-op CFN updates).
   [OK]   All 11 stacks deployed
 ```
 
-`ott-pipeline.ps1` does what the CI/CD buildspec does, plus it ingests one raw file and waits for Stage A → B → DQ, plus runs the analytics Lambdas — useful for end-to-end iteration in one command.
-
-The CI/CD path (3.2) and the PowerShell path (3.8) deploy IDENTICAL CloudFormation; the buildspec and `ott-pipeline.ps1` share the same stack list, the same parameter overrides, and the same dependency order.
+`ott-pipeline.ps1` does what the CI/CD buildspec does, plus ingests one raw file and runs the analytics Lambdas — useful for end-to-end iteration in one command. Both paths deploy identical CloudFormation.
 
 ---
 

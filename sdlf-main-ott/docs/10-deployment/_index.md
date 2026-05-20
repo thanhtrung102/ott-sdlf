@@ -120,6 +120,8 @@ The one manual parameter common to all templates:
 
 **Pipeline name**: `sdlf-ott-cicd`
 
+> **Internals deep-dive**: see [`sdlf-cicd/README.md`](https://github.com/thanhtrung102/ott-sdlf/blob/main/sdlf-cicd/README.md) in the repo for the full architecture — the two CodeBuild projects, the IAM role's permission set (including the `glue:UpdateDatabase` gotcha), the buildspec hierarchy, how to deploy the CI/CD stack itself, and the failure-recovery playbook.
+
 Every push to `main` runs all four stages. The pipeline was verified end-to-end on execution `e83eace2-09d3-4849-9514-8d42b4fb8601`:
 
 ```

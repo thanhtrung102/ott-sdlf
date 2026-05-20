@@ -63,19 +63,11 @@ Numbers above are observed, not theoretical — measured on the deployed referen
 
 ---
 
-## How to follow the workshop
+## How to follow
 
-Every chapter follows this pattern:
+Each chapter is: **command → expected output → verify**. Copy-paste, check the output matches, move on. Deeper "why" sits under [docs](../).
 
-1. **What we're doing** — one paragraph.
-2. **Step N** — numbered commands you can copy and paste.
-3. **Expected output** — a code block showing what you should actually see. If you don't see this, something's wrong.
-4. **Verify** — an independent check (CLI command, Athena query, or browser hit).
-5. **Reference** — a link to the deeper [docs section](../) if you want to understand *why*.
-
-When you finish chapter 7 (Cleanup), nothing of the workshop should remain in your AWS account.
-
-> **Tip**: Run every step from a single PowerShell session with `$env:AWS_PROFILE` and `$env:AWS_REGION = "ap-southeast-1"` set up-front. Most of the commands below assume those are in place.
+> **Set up your session once**: `$env:AWS_REGION = "ap-southeast-1"` and `$env:AWS_PROFILE = "<your-profile>"`. Every command below assumes both are set.
 
 ---
 

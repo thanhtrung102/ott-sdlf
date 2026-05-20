@@ -69,14 +69,12 @@ SELECT COUNT(*) AS gold_rows,
 FROM fpt_ott_searchevents_gold.keyword_trends;
 ```
 
-**Expected**:
+**Expected** (exact numbers vary):
 
 ```
 gold_rows    unique_keywords
 13707        1691
 ```
-
-13,707 = (keyword × platform × genre × trend_date) tuples. 1,691 distinct keywords.
 
 ---
 
@@ -150,7 +148,7 @@ $KEY = aws ssm get-parameter --name /sdlf/ott/api-key/prod --region ap-southeast
 Invoke-RestMethod -Uri "$API/trending?limit=5" -Headers @{"x-api-key" = $KEY}
 ```
 
-**Expected** (live output, observed today — `current_cnt` is the per-week search volume, so values shift each Trending Lambda run):
+**Expected** (live — exact keywords/counts vary by reference date; diacritics preserved end-to-end):
 
 ```
 keyword_norm                                       derived_genre   current_cnt
@@ -161,8 +159,6 @@ sao băng                                           PHIM_HAN        2389
 fairy tail                                         ANIME           2313
 giữa thanh xuân                                    PHIM_VIET       2147
 ```
-
-Diacritics are preserved end-to-end: raw → SHA-256-hashed user → Athena → Lambda → JSON → curl. The exact top-5 will shift between Trending Lambda runs as the reference date moves; the *set* of top-trending keywords stays stable.
 
 **Verify the freshness header**:
 
@@ -209,7 +205,7 @@ foreach ($r in @("content_gaps","premium_vs_free","repeat_search_rate","hour_of_
 }
 ```
 
-**Expected** (live output, observed today):
+**Expected** (live — top 2 of `premium_vs_free`):
 
 ```
 === premium_vs_free (top 2) ===
@@ -225,10 +221,6 @@ premium_searches  : 3955
 free_searches     : 81958
 premium_share_pct : 4.6
 ```
-
-Two takeaways:
-1. **Western content (PHIM_AU_MY) at 6.9 % premium share is ~2× the platform median** — that's the actionable insight for content acquisition.
-2. **EMPTY_QUERY** appearing here is a quality signal: users typed nothing (or whitespace) then submitted. 4.6 % of those are premium users — worth investigating whether the search box has a UX bug when premium users hit it.
 
 > Reference: [Analytics Pipelines](../../5-analytics/), [HTTP API](../../7-api/).
 

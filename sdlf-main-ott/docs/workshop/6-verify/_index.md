@@ -51,9 +51,7 @@ python D:\ott-sdlf\scripts\contract_test.py
 All contracts passed.
 ```
 
-Every `[PASS]` line is a real assertion. If any fails, the script exits non-zero — the CI/CD `Deploy` stage fails the build.
-
-The labels in parentheses (`L3 regression`, `L5 SigV4`, `L7 LF`, `L8`, `N1`, `P0a`, `P0b`) refer to specific past incidents where these behaviors broke. Each assertion exists *because* something once broke in production.
+If any assertion fails, the script exits non-zero and the CI/CD `Deploy` stage fails the build.
 
 ---
 

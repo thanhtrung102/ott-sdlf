@@ -88,9 +88,7 @@ aws sqs get-queue-attributes --queue-url "$(aws sqs get-queue-url --queue-name s
 
 ## 4.4 Stage B — Glue ETL (~25-33 min)
 
-> The Glue job processes all dt partitions Spark sees under SOURCE_LOCATION (not just the new one), because the raw layer uses the bare-YYYYMMDD directory layout and Spark's directory-recursive read picks all of them up. With 16 partitions on disk, observed run-time was 2020 s (~33 min). With the reference 14 days only, expect ~25 min.
-
-Stage B picks up the EventBridge event, starts the Glue job with the right SOURCE_LOCATION/OUTPUT_LOCATION arguments, then waits for completion.
+Stage B picks up the EventBridge event, starts the Glue job, waits for completion. Spark reads all dt partitions under SOURCE_LOCATION (not just the new one), so wall-clock depends on cumulative day count.
 
 ```powershell
 $smArn = "arn:aws:states:ap-southeast-1:$(aws sts get-caller-identity --query Account --output text):stateMachine:sdlf-ott-mainB-sm"
@@ -117,13 +115,13 @@ aws logs filter-log-events --region ap-southeast-1 `
   --query "events[-1].message" --output text
 ```
 
-**Expected** (numbers will vary slightly run-to-run):
+**Expected** (numbers vary):
 
 ```
 LINEAGE run_id=jr_<id> raw=1298470 post_year=1298261 post_dedup=1145826 output=1145826 retention=0.882
 ```
 
-The `retention=0.882` is what we want: above the 0.7 alarm threshold. If it's below, an `LINEAGE_ALARM` log entry will fire and an SNS notification goes out.
+`retention ≥ 0.7` is required; below that, `LINEAGE_ALARM` fires SNS.
 
 ---
 
@@ -199,9 +197,7 @@ Passed    205
 Failed     25
 ```
 
-A `Failed` count > 0 is **not** automatically a pipeline failure. Glue Data Quality's auto-recommended ruleset includes statistical assertions (e.g. cardinality bounds, completeness ratios) that can drift over time as data shape evolves. The DQ Step Function is configured to PASS the overall SM execution when the *score threshold* is met even if individual rules fail.
-
-To see which rules failed:
+A `Failed` count > 0 is not a pipeline failure — the DQ SM passes when the score threshold is met. To see which rules failed:
 
 ```sql
 SELECT rule, COUNT(*) AS occurrences
@@ -213,30 +209,18 @@ ORDER BY occurrences DESC;
 
 > The `dq_results` table's metrics column is named `evaluated_metrics` (with underscore), not `evaluatedmetrics`. Trips up first-time queries.
 
-**Expected** (live output, observed today — the actual failing rules on this pipeline):
+**Expected** (live output — top failing rules; numbers vary):
 
 ```
 occurrences  rule
 -----------  ------------------------------------------------------------------------------
-          4  ColumnValues "subscription_count" in ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"]
           4  ColumnValues "subscription_count" <= 15
-          4  ColumnValues "derived_genre" in ["PHIM_VIET","UNKNOWN","PHIM_TRUNG","ANIME","PHIM_AU_MY","PHIM_HAN","NHAC"] with threshold...
+          4  ColumnValues "derived_genre" in [...7-genre subset]
           4  Uniqueness "event_id" > 0.85
-          4  ColumnValues "subscription_count" in ["0","1"] with threshold >= 0.93
-          1  ColumnValues "subscription_count" <= 12
           1  Uniqueness "event_id" > 0.95
-          1  ColumnValues "dt" in [...]
 ```
 
-The failures cluster into three real issues — every workshop participant will see them and they're worth understanding:
-
-| Cluster | Why it fails | What to do |
-|---|---|---|
-| **`subscription_count` bound rules** | Glue DQ auto-recommended `<= 15` and `<= 12` from initial small-sample data; real data has users with up to 16+ plans. | Either widen the rule (manual edit of ruleset) or accept these as data-shape drift. |
-| **`derived_genre` enum** | Auto-recommended a 7-genre subset (no `EMPTY_QUERY`, `TRUYEN_HINH`, `THE_THAO`); real classifier now emits 10. | Update the ruleset enum to all 10 genres. |
-| **`event_id` Uniqueness > 0.95** | Real signal — uniqueness is **0.9303**. The Glue script's `dropDuplicates(["eventid"])` is *per-run*, not per-table; re-ingesting the same source file into a new `dt` partition produces cross-partition duplicates (1,231,739 cumulative rows ÷ 1,145,826 distinct = 85,913 dupes). | Either accept (workshop re-trigger pattern intentionally creates this) or add a downstream `INSERT OVERWRITE` dedup step. The `>0.85` rule passes; the `>0.95` rule doesn't. |
-
-A `Failed` outcome ≠ pipeline failure. The DQ Step Function passes the overall execution when the score threshold is met, even if individual rules fail.
+> See the [Data Quality deep-dive](../../4-quality/) for why these specific rules fail and how to update the auto-recommended ruleset.
 
 ---
 
@@ -249,7 +233,7 @@ GROUP BY derived_genre
 ORDER BY rows DESC;
 ```
 
-**Expected** (live output, observed today — June 2022 dataset post-dedup, cumulative across all dt partitions):
+**Expected** (live — cumulative across all dt partitions, exact numbers will vary):
 
 ```
 derived_genre        rows
@@ -267,11 +251,9 @@ THE_THAO           34,619
 TOTAL           1,231,739
 ```
 
-**1,231,739 curated rows across 10 genres**. (Note: this is the cumulative table count after multiple runs; a single Glue run on 14 days outputs ~1,145,826 rows per the LINEAGE log.)
+10 genres, ~1.2M rows. A single Glue run outputs ~1.15M per the LINEAGE log; the rest is cumulative across re-triggers.
 
-The single biggest takeaway: **PHIM_VIET (Vietnamese films) is 30 % of all searches** — the platform's audience is strongly local-content-first.
-
-> Reference: [Data Ingestion deep-dive](../../3-ingestion/) and [Data Quality deep-dive](../../4-quality/).
+> Reference: [Data Ingestion deep-dive](../../3-ingestion/), [Data Quality deep-dive](../../4-quality/).
 
 ---
 
