@@ -36,10 +36,12 @@ The deploying principal must be a Lake Formation administrator. Without this, th
 **Verify**:
 
 ```powershell
-aws lakeformation list-data-lake-administrators --region ap-southeast-1 `
-  --query "DataLakeAdmins[].DataLakePrincipalIdentifier" --output text
+aws lakeformation get-data-lake-settings --region ap-southeast-1 `
+  --query "DataLakeSettings.DataLakeAdmins[].DataLakePrincipalIdentifier" --output text
 # Expected: at least one ARN that matches your deployer principal
 ```
+
+> The `list-data-lake-administrators` operation is only available on recent AWS CLI v2 builds and crashes on older ones with `Found invalid choice 'list-data-lake-administrators'`. `get-data-lake-settings` is the older, universally-supported form and returns the same data.
 
 If your principal isn't listed, add it via the Lake Formation console → Administrative roles → Data lake administrators → Add.
 
