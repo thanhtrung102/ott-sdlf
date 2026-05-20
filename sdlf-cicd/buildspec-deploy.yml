@@ -11,6 +11,8 @@ phases:
   install:
     runtime-versions:
       python: 3.12
+    commands:
+      - pip install --quiet boto3
 
   pre_build:
     commands:
@@ -68,6 +70,18 @@ phases:
             --parameter-overrides pPipelineReference=$PIPELINE_REFERENCE "$@"
           echo "$stack OK"
         }
+
+        # --- Stage the code artifacts the stacks reference by S3 URL ---
+        # Without this a clean deploy fails: the Glue job and the 4 Lambda
+        # stacks point at S3 objects that nothing else creates. The classifier
+        # zip stays a manual prerequisite (binary, not in the repo) — see 5.2.5.
+        echo ""
+        echo "--- Staging Glue script ---"
+        aws s3 cp sdlf-main-ott/glue/ott-search-glue-job.py \
+          "s3://ott-search-${ACCOUNT}-prod/ott/searchevents/ott-search-glue-job.py" \
+          --region $REGION
+        echo "--- Staging analytics Lambda zips ---"
+        python scripts/package_and_deploy_lambdas.py
 
         deploy sdlf-ott-searchevents-glue-job sdlf-main-ott/pipeline-ott-glue-job.yaml \
           pTeamName=ott \
@@ -177,5 +191,8 @@ phases:
             *) echo "ERROR: $stack in unexpected state $STATUS"; exit 1 ;;
           esac
         done
+        echo ""
+        echo "Pushing analytics Lambda code to the live functions..."
+        python scripts/package_and_deploy_lambdas.py --update-live
         echo ""
         echo "Deploy $PIPELINE_REFERENCE complete."

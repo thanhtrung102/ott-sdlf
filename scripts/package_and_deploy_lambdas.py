@@ -25,18 +25,20 @@ from pathlib import Path
 import boto3
 
 REGION = "ap-southeast-1"
-ARTIFACTS_BUCKET = "fpt-ott-ap-southeast-1-703668403514-artifacts-prod"
+ARTIFACTS_BUCKET_SSM = "/sdlf/storage/rArtifactsBucket/prod"
 
-# (lambda-key, source-path, live-function-name)
+# Repo-relative paths so this runs identically on Windows (ott-pipeline.ps1)
+# and Linux (CI/CD CodeBuild): this file is <repo>/scripts/, sources are at
+# <repo>/sdlf-main-ott/lambda/<subdir>/src/lambda_function.py.
+REPO = Path(__file__).resolve().parent.parent
+LAMBDA_ROOT = REPO / "sdlf-main-ott" / "lambda"
+
+# (lambda-key, lambda-subdir, live-function-name)
 LAMBDAS = [
-    ("contentgap", r"D:\ott-sdlf\sdlf-main-ott\lambda\content-gap\src\lambda_function.py",
-     "sdlf-ott-mainCG-report"),
-    ("trending", r"D:\ott-sdlf\sdlf-main-ott\lambda\trending\src\lambda_function.py",
-     "sdlf-ott-mainTR-report"),
-    ("lutrefresh", r"D:\ott-sdlf\sdlf-main-ott\lambda\lut-refresh\src\lambda_function.py",
-     "sdlf-ott-mainLUT-refresh"),
-    ("api", r"D:\ott-sdlf\sdlf-main-ott\lambda\api\src\lambda_function.py",
-     "sdlf-ott-api"),
+    ("contentgap", "content-gap", "sdlf-ott-mainCG-report"),
+    ("trending",   "trending",    "sdlf-ott-mainTR-report"),
+    ("lutrefresh", "lut-refresh", "sdlf-ott-mainLUT-refresh"),
+    ("api",        "api",         "sdlf-ott-api"),
 ]
 
 
@@ -60,22 +62,25 @@ def main():
 
     s3 = boto3.client("s3", region_name=REGION)
     lam = boto3.client("lambda", region_name=REGION)
+    ssm = boto3.client("ssm", region_name=REGION)
 
-    for key, src, fn_name in LAMBDAS:
+    artifacts_bucket = ssm.get_parameter(Name=ARTIFACTS_BUCKET_SSM)["Parameter"]["Value"]
+
+    for key, subdir, fn_name in LAMBDAS:
         if args.only and args.only != key:
             continue
-        src_path = Path(src)
+        src_path = LAMBDA_ROOT / subdir / "src" / "lambda_function.py"
         if not src_path.exists():
-            print(f"[{key}] SKIP: {src} not found")
+            print(f"[{key}] SKIP: {src_path} not found")
             continue
         blob, digest = package(src_path)
         s3_key = f"lambda/{key}.zip"
         s3.put_object(
-            Bucket=ARTIFACTS_BUCKET, Key=s3_key, Body=blob,
+            Bucket=artifacts_bucket, Key=s3_key, Body=blob,
             ContentType="application/zip",
-            Metadata={"source-sha256-12": digest, "source-path": str(src_path).replace("\\", "/")},
+            Metadata={"source-sha256-12": digest},
         )
-        print(f"[{key}] uploaded s3://{ARTIFACTS_BUCKET}/{s3_key} "
+        print(f"[{key}] uploaded s3://{artifacts_bucket}/{s3_key} "
               f"({len(blob)} bytes, sha256={digest})")
         if args.update_live:
             r = lam.update_function_code(FunctionName=fn_name, ZipFile=blob)
