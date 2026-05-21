@@ -154,6 +154,17 @@ if (-not $SkipDeploy -and -not $AnalyticsOnly) {
     $KmsKey = (aws ssm get-parameter --name "/sdlf/storage/rKMSKey/prod" `
         --query "Parameter.Value" --output text --region $Region)
 
+    # Discover the project bucket's KMS key (different from the SDLF KMS) so
+    # the LUT-Refresh role can encrypt the mirrored classifier zip on
+    # PutObject. Without this, save_lut() fails with AccessDenied on the
+    # second of its two writes.
+    $ProjectKms = (aws s3api get-bucket-encryption --bucket $GlueBucket `
+        --region $Region --output text `
+        --query "ServerSideEncryptionConfiguration.Rules[0].ApplyServerSideEncryptionByDefault.KMSMasterKeyID" 2>$null)
+    if ((-not $ProjectKms) -or $ProjectKms -eq "None") {
+        Write-Fail "Cannot discover KMS key for project bucket s3://$GlueBucket — required for LUT-Refresh mirror"
+    }
+
     # Crawler role ARN has a random CFN suffix — read from deployed DQ stack on re-runs
     $CrawlerRoleArn = (aws cloudformation describe-stacks `
         --stack-name sdlf-pipeline-ott-dataquality --region $Region `
@@ -219,7 +230,8 @@ if (-not $SkipDeploy -and -not $AnalyticsOnly) {
         "pMaxNewKeywords=15000",
         "pBedrockModelId=global.anthropic.claude-haiku-4-5-20251001-v1:0",
         "pAthenaResultsBucket=$AthenaBucket",
-        "pAthenaWorkgroupKmsKey=$KmsKey"
+        "pAthenaWorkgroupKmsKey=$KmsKey",
+        "pProjectBucketKmsKeyArn=$ProjectKms"
     )
 
     # 6–7. Content Gap and Trending Lambdas — triggered by DQ SUCCEEDED

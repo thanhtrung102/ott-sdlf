@@ -29,7 +29,11 @@ phases:
       - ATHENA_RESULTS_BUCKET=$(echo $ATHENA_WG_CFG | python3 -c "import json,sys; c=json.load(sys.stdin); print(c['OutputLocation'].split('/')[2])")
       - ATHENA_WG_KMS=$(echo $ATHENA_WG_CFG | python3 -c "import json,sys; c=json.load(sys.stdin); print(c.get('EncryptionConfiguration',{}).get('KmsKey',''))")
       - API_KEY=$(aws ssm get-parameter --name "/sdlf/ott/api-key/prod" --query "Parameter.Value" --output text --region $REGION)
-      - echo "Account $ACCOUNT  KMS $KMS_KEY  AthenaResultsBucket $ATHENA_RESULTS_BUCKET  AthenaWgKms $ATHENA_WG_KMS  ApiKeyLen ${#API_KEY}"
+      # Discover the project bucket's KMS key so the LUT-Refresh role can write
+      # the mirrored classifier zip (save_lut). The bucket is encrypted with a
+      # different KMS key than the SDLF artifacts bucket.
+      - PROJECT_KMS_ARN=$(aws s3api get-bucket-encryption --bucket "ott-search-${ACCOUNT}-prod" --region $REGION --query "ServerSideEncryptionConfiguration.Rules[0].ApplyServerSideEncryptionByDefault.KMSMasterKeyID" --output text)
+      - echo "Account $ACCOUNT  KMS $KMS_KEY  AthenaResultsBucket $ATHENA_RESULTS_BUCKET  AthenaWgKms $ATHENA_WG_KMS  ProjectKms $PROJECT_KMS_ARN  ApiKeyLen ${#API_KEY}"
       - |
         # One-time migration: delete gold quality stack if it is on the old separate template.
         # Detection: old template has no pStageName parameter; new unified template always has it.
@@ -117,7 +121,8 @@ phases:
           pMaxNewKeywords=${MAX_NEW_KEYWORDS} \
           pBedrockModelId=${BEDROCK_MODEL_ID} \
           pAthenaResultsBucket=${ATHENA_RESULTS_BUCKET} \
-          pAthenaWorkgroupKmsKey=${ATHENA_WG_KMS}
+          pAthenaWorkgroupKmsKey=${ATHENA_WG_KMS} \
+          pProjectBucketKmsKeyArn=${PROJECT_KMS_ARN}
 
         deploy sdlf-pipeline-ott-contentgap sdlf-main-ott/pipeline-ott-contentgap.yaml \
           pAthenaResultsBucket=${ATHENA_RESULTS_BUCKET} \

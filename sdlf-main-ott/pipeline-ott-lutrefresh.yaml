@@ -38,6 +38,9 @@ Parameters:
   pAthenaWorkgroupKmsKey:
     Type: String
     Description: KMS key ARN used by the sdlf-ott Athena workgroup for SSE_KMS output encryption
+  pProjectBucketKmsKeyArn:
+    Type: String
+    Description: KMS key ARN for ott-search-${ACCT}-prod (the Glue project bucket). Required so save_lut() can mirror the classifier zip into the SSE_KMS-encrypted project bucket.
 
 Resources:
 
@@ -123,6 +126,10 @@ Resources:
                 Resource:
                   - !Ref pKmsKeyArn
                   - !Ref pAthenaWorkgroupKmsKey
+                  # Required for save_lut()'s mirror PutObject into the SSE_KMS
+                  # project bucket ott-search-${ACCT}-prod (different key from
+                  # the SDLF KMS used by the artifacts bucket).
+                  - !Ref pProjectBucketKmsKeyArn
               - Effect: Allow
                 Action:
                   - bedrock:InvokeModel
