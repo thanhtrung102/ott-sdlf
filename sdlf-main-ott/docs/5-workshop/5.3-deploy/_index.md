@@ -21,7 +21,7 @@ This chapter walks path A. Path B is at section 5.3.9 for the bootstrap / iterat
 
 ## 5.3.1 What gets deployed
 
-Twelve CloudFormation stacks, in dependency order:
+Eleven CloudFormation stacks, in dependency order:
 
 ```
 1.  sdlf-ott-searchevents-glue-job   — Glue job + IAM role + raw/curated catalog tables
@@ -30,12 +30,11 @@ Twelve CloudFormation stacks, in dependency order:
 4.  sdlf-pipeline-ott-dataquality    — Curated-layer DQ state machine
 5.  sdlf-pipeline-ott-lutrefresh     — LUT-Refresh Lambda + DLQ + EventBridge rule
 6.  sdlf-pipeline-ott-contentgap     — Content-Gap Lambda + 5 catalog tables + DLQ
-7.  sdlf-pipeline-ott-trending       — Trending Lambda + gold catalog + DLQ
-8.  sdlf-pipeline-ott-goldquality    — Gold-layer DQ state machine
-9.  sdlf-pipeline-ott-monitoring     — CloudWatch dashboard + 18 alarms
-10. sdlf-pipeline-ott-lakeformation  — Column-level RBAC on curated
-11. sdlf-pipeline-ott-api            — HTTP API (x-api-key, freshness headers, arm64)
-12. sdlf-pipeline-ott-dashboard      — S3 + CloudFront hosting for the search-analytics dashboard
+7.  sdlf-pipeline-ott-trending       — Trending Lambda + trending_all/unknown catalog + DLQ
+8.  sdlf-pipeline-ott-monitoring     — CloudWatch dashboard + 17 alarms
+9.  sdlf-pipeline-ott-lakeformation  — Column-level RBAC on curated
+10. sdlf-pipeline-ott-api            — HTTP API (x-api-key, freshness headers, arm64)
+11. sdlf-pipeline-ott-dashboard      — S3 + CloudFront hosting for the search-analytics dashboard
 ```
 
 The deploy path handles artifact staging, stack ordering, and parameter wiring automatically.
@@ -210,7 +209,7 @@ aws cloudformation list-stacks --region ap-southeast-1 `
   --output text
 ```
 
-**Expected** — 12 top-level OTT stacks + 4 SDLF MODULE nested stacks (created automatically by the Stage A/B MODULE constructs; do not deploy them directly):
+**Expected** — 11 top-level OTT stacks + 4 SDLF MODULE nested stacks (created automatically by the Stage A/B MODULE constructs; do not deploy them directly):
 
 ```
 sdlf-ott-searchevents-glue-job
@@ -218,7 +217,6 @@ sdlf-pipeline-ott-api
 sdlf-pipeline-ott-contentgap
 sdlf-pipeline-ott-dashboard
 sdlf-pipeline-ott-dataquality
-sdlf-pipeline-ott-goldquality
 sdlf-pipeline-ott-lakeformation
 sdlf-pipeline-ott-lutrefresh
 sdlf-pipeline-ott-mainA
@@ -231,7 +229,7 @@ sdlf-pipeline-ott-monitoring
 sdlf-pipeline-ott-trending
 ```
 
-16 names total.
+15 names total.
 
 ---
 

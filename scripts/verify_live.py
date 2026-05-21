@@ -27,8 +27,6 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="repla
 
 REGION = "ap-southeast-1"
 ANALYTICS_DB = "fpt_ott_searchevents_analytics"
-GOLD_DB = "fpt_ott_searchevents_gold"
-
 OTT_STACKS = [
     "sdlf-ott-searchevents-glue-job",
     "sdlf-pipeline-ott-mainA",
@@ -37,13 +35,12 @@ OTT_STACKS = [
     "sdlf-pipeline-ott-lutrefresh",
     "sdlf-pipeline-ott-contentgap",
     "sdlf-pipeline-ott-trending",
-    "sdlf-pipeline-ott-goldquality",
     "sdlf-pipeline-ott-monitoring",
     "sdlf-pipeline-ott-lakeformation",
     "sdlf-pipeline-ott-api",
     "sdlf-pipeline-ott-dashboard",
 ]
-STATE_MACHINES = ["mainA", "mainB", "mainDQ", "mainGoldDQ"]
+STATE_MACHINES = ["mainA", "mainB", "mainDQ"]
 ANALYTICS_LAMBDAS = [
     "sdlf-ott-mainTR-report",
     "sdlf-ott-mainCG-report",
@@ -97,7 +94,7 @@ def verify_cicd() -> None:
 
 
 def verify_stacks() -> None:
-    section("CloudFormation — 12 OTT stacks")
+    section("CloudFormation — 11 OTT stacks")
     cfn = boto3.client("cloudformation", region_name=REGION)
     for name in OTT_STACKS:
         try:
@@ -125,8 +122,7 @@ def verify_glue() -> None:
              "Glue job last run", f"{r['JobRunState']}, {r['ExecutionTime']}s")
 
     dbs = {d["Name"] for d in glue.get_databases()["DatabaseList"]}
-    for db in (ANALYTICS_DB, GOLD_DB):
-        line("PASS" if db in dbs else "FAIL", f"Glue database {db}")
+    line("PASS" if ANALYTICS_DB in dbs else "FAIL", f"Glue database {ANALYTICS_DB}")
 
     tables = {t["Name"] for t in glue.get_paginator("get_tables")
               .paginate(DatabaseName=ANALYTICS_DB).build_full_result()["TableList"]}
@@ -135,11 +131,6 @@ def verify_glue() -> None:
          f"{ANALYTICS_DB}: 10 expected tables",
          f"{len(tables & EXPECTED_ANALYTICS_TABLES)}/10"
          + (f", missing {sorted(missing)}" if missing else ""))
-
-    gold_tables = {t["Name"] for t in
-                   glue.get_tables(DatabaseName=GOLD_DB)["TableList"]}
-    line("PASS" if "keyword_trends" in gold_tables else "FAIL",
-         f"{GOLD_DB}.keyword_trends")
 
 
 def verify_state_machines() -> None:

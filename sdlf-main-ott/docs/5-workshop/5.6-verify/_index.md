@@ -162,7 +162,6 @@ Start-Process "https://ap-southeast-1.console.aws.amazon.com/cloudwatch/home?reg
 - Stage A + Stage B DLQ depth
 - Glue job elapsed time + bytes read
 - Per-Lambda Invocations / Errors / Duration (LUT-Refresh, Content Gap, Trending)
-- Gold DQ SM executions
 
 > 📷 **Screenshot —** CloudWatch console: the `sdlf-ott-searchevents-pipeline` dashboard with all widgets populated.
 > *Placeholder: capture and save as `02-cloudwatch-dashboard.png` in this chapter folder, then replace this block with `![CloudWatch pipeline dashboard](02-cloudwatch-dashboard.png)`.*

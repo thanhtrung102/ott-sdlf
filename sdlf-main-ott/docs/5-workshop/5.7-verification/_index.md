@@ -46,24 +46,21 @@ account=703668403514  region=ap-southeast-1
   [PASS] sdlf-pipeline-ott-lutrefresh  (UPDATE_COMPLETE)
   [PASS] sdlf-pipeline-ott-contentgap  (UPDATE_COMPLETE)
   [PASS] sdlf-pipeline-ott-trending  (UPDATE_COMPLETE)
-  [PASS] sdlf-pipeline-ott-goldquality  (UPDATE_COMPLETE)
   [PASS] sdlf-pipeline-ott-monitoring  (UPDATE_COMPLETE)
   [PASS] sdlf-pipeline-ott-lakeformation  (UPDATE_COMPLETE)
   [PASS] sdlf-pipeline-ott-api  (UPDATE_COMPLETE)
+  [PASS] sdlf-pipeline-ott-dashboard  (UPDATE_COMPLETE)
 
 === Glue ETL job + catalog ===
   [PASS] Glue job sdlf-ott-searchevents-glue-job  (Glue 4.0, 10xG.1X)
-  [PASS] Glue job last run  (SUCCEEDED, 1772s)
+  [PASS] Glue job last run  (SUCCEEDED, 1691s)
   [PASS] Glue database fpt_ott_searchevents_analytics
-  [PASS] Glue database fpt_ott_searchevents_gold
   [PASS] fpt_ott_searchevents_analytics: 10 expected tables  (10/10)
-  [PASS] fpt_ott_searchevents_gold.keyword_trends
 
-=== Step Functions — 4 state machines ===
+=== Step Functions — 3 state machines ===
   [PASS] sdlf-ott-mainA-sm latest execution  (SUCCEEDED)
   [PASS] sdlf-ott-mainB-sm latest execution  (SUCCEEDED)
   [PASS] sdlf-ott-mainDQ-sm latest execution  (SUCCEEDED)
-  [PASS] sdlf-ott-mainGoldDQ-sm latest execution  (SUCCEEDED)
 
 === Lambda — analytics + API functions ===
   [PASS] sdlf-ott-mainTR-report  (python3.12, 256MB)
@@ -80,7 +77,7 @@ account=703668403514  region=ap-southeast-1
 
 === CloudWatch — dashboard + alarms ===
   [PASS] dashboard sdlf-ott-searchevents-pipeline
-  [PASS] sdlf-ott alarms deployed  (18 alarms)
+  [PASS] sdlf-ott alarms deployed  (17 alarms)
   [WARN] alarms currently in ALARM state  (sdlf-ott-mainB-dlq-not-empty, sdlf-ott-mainCG-report-near-timeout, sdlf-ott-mainLUT-refresh-near-timeout)
 
 === HTTP API — endpoints + auth + freshness ===
@@ -96,7 +93,7 @@ account=703668403514  region=ap-southeast-1
   PASS=36  WARN=3  FAIL=0
 ```
 
-`FAIL=0` is the success criterion. The 3 `WARN`s are explained in section 5.7.3 — the Stage B DLQ depth=1 is a single stuck message from a prior Stage B failed execution (and the `sdlf-ott-mainB-dlq-not-empty` alarm it trips); the two `*-near-timeout` alarms are early-warning signals, not outages; and the Lake Formation column RBAC is defined but dormant until `IAM_ALLOWED_PRINCIPALS` is revoked. If the post-Trending Gold DQ happens to be mid-execution when you run this, `mainGoldDQ-sm` shows a transient 4th `WARN` (`RUNNING`) that clears on its own.
+`FAIL=0` is the success criterion. The 3 `WARN`s are explained in section 5.7.3 — the Stage B DLQ depth=1 is a single stuck message from a prior Stage B failed execution (and the `sdlf-ott-mainB-dlq-not-empty` alarm it trips); the two `*-near-timeout` alarms are early-warning signals, not outages; and the Lake Formation column RBAC is defined but dormant until `IAM_ALLOWED_PRINCIPALS` is revoked.
 
 ---
 
@@ -107,17 +104,17 @@ account=703668403514  region=ap-southeast-1
 | 1 | CI/CD auto-deploy | `sdlf-ott-cicd` CodePipeline | Latest execution `Succeeded` |
 | 2 | Infrastructure-as-code | 11 OTT CloudFormation stacks | All `*_COMPLETE` |
 | 3 | ETL enrichment | Glue 4.0 job, 10×G.1X | Last run `SUCCEEDED` in 1772 s |
-| 4 | Data catalog | 2 Glue DBs, 10 analytics + `keyword_trends` gold tables | All present |
-| 5 | Orchestration | 4 Step Functions (`mainA/B/DQ/GoldDQ`) | All last executions `SUCCEEDED` |
+| 4 | Data catalog | 1 Glue DB, 10 analytics tables | All present |
+| 5 | Orchestration | 3 Step Functions (`mainA/B/DQ`) | All last executions `SUCCEEDED` |
 | 6 | Analytics compute | 4 Lambdas (`mainTR/mainCG/mainLUT/api`) | All deployed, Python 3.12 |
 | 7 | Failure isolation | 5 DLQs (Stage A/B FIFO + 3 analytics) | All depth 0 |
-| 8 | Observability | 1 dashboard + 18 alarms | All deployed |
-| 9 | Serving layer | HTTP API v2 | 200 + freshness header; 401 without key |
+| 8 | Observability | 1 CloudWatch dashboard + 1 CloudFront dashboard + 17 alarms | All deployed |
+| 9 | Serving layer | HTTP API v2 + CloudFront dashboard | 200 + freshness header; 401 without key |
 | 10 | Access control | Lake Formation on `curated` | Grant state reported (see 5.7.3) |
 
-That is the entire deployed surface — 11 stacks, 1 Glue job, 14 catalog tables
-(across 4 databases), 4 state machines, 13 Lambdas (4 analytics + 9 SDLF
-framework), 5 DLQs, 18 alarms, 1 HTTP API.
+That is the entire deployed surface — 11 stacks, 1 Glue job, 10 catalog tables
+in `fpt_ott_searchevents_analytics`, 3 state machines, 12 Lambdas (4 analytics + 8 SDLF
+framework), 5 DLQs, 17 alarms, 1 HTTP API, 1 CloudFront dashboard.
 
 ---
 
@@ -266,7 +263,7 @@ quit. The `content_gaps` report drills this down to specific abandoned keywords.
 | Insight | Source table / report | Business action |
 |---|---|---|
 | Genre demand mix | `curated` | Content acquisition weighting |
-| Trending titles | `keyword_trends` gold / `trending_all` | Promotion + push notifications |
+| Trending titles | `trending_all` CSV | Promotion + push notifications |
 | Premium skew by genre | `premium_vs_free` | Tiered-content strategy |
 | Hourly demand curve | `hour_of_day_heatmap` | Cache-warming, job scheduling |
 | Abandon rate / content gaps | `content_gaps` | Fill catalog holes |

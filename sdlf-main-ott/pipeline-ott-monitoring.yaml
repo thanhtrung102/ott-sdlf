@@ -38,9 +38,6 @@ Parameters:
   pApiLambdaName:
     Type: String
     Default: sdlf-ott-api
-  pGoldDQSmArn:
-    Type: AWS::SSM::Parameter::Value<String>
-    Default: /sdlf/pipeline/rStateMachine/ott-mainGoldDQ
   pAlarmPeriodSeconds:
     Type: Number
     Default: 300
@@ -229,21 +226,6 @@ Resources:
             {
               "type": "metric",
               "x": 0, "y": 31, "width": 12, "height": 6,
-              "properties": {
-                "title": "Gold DQ SM Executions",
-                "metrics": [
-                  ["AWS/States","ExecutionsSucceeded","StateMachineArn","${pGoldDQSmArn}",{"label":"Succeeded","color":"#2ca02c"}],
-                  ["AWS/States","ExecutionsFailed","StateMachineArn","${pGoldDQSmArn}",{"label":"Failed","color":"#d62728"}]
-                ],
-                "view": "timeSeries",
-                "stat": "Sum",
-                "period": 3600,
-                "region": "${AWS::Region}"
-              }
-            },
-            {
-              "type": "metric",
-              "x": 12, "y": 31, "width": 12, "height": 6,
               "properties": {
                 "title": "Trending Lambda — Invocations & Errors",
                 "metrics": [
@@ -625,27 +607,6 @@ Resources:
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
       AlarmActions:
-        - !Ref pSnsTopicArn
-
-  rAlarmGoldDQFailed:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmName: sdlf-ott-mainGoldDQ-sm-execution-failed
-      AlarmDescription: Gold DQ SM has a failed execution — keyword_trends gold table may have quality issues
-      Namespace: AWS/States
-      MetricName: ExecutionsFailed
-      Dimensions:
-        - Name: StateMachineArn
-          Value: !Ref pGoldDQSmArn
-      Statistic: Sum
-      Period: !Ref pAlarmPeriodSeconds
-      EvaluationPeriods: 1
-      Threshold: 1
-      ComparisonOperator: GreaterThanOrEqualToThreshold
-      TreatMissingData: notBreaching
-      AlarmActions:
-        - !Ref pSnsTopicArn
-      OKActions:
         - !Ref pSnsTopicArn
 
 Outputs:

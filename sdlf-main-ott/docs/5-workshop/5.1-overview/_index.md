@@ -18,7 +18,7 @@ A user types a query into the FPT Play OTT app. The app emits a `log_search` eve
 2. **Enrich** — A 19-step Glue ETL job repairs corrupt dates, hashes user IDs, classifies the search keyword into one of 10 genres, normalises the platform string, computes session boundaries, and writes the result to a curated Parquet table partitioned by `(dt, derived_genre)`.
 3. **Quality-gate** — Glue Data Quality runs over the curated table; if it fails, the downstream analytics don't fire.
 4. **Analyse** — Three Lambdas fan out from a successful DQ:
-   - **Trending** — week-over-week growth analysis, writes a gold-layer `keyword_trends` table + CSVs, and re-renders the centralized CloudFront dashboard (`index.html` — KPIs, volume charts, plus the 5 content-gap reports + trending section, all from `curated`).
+   - **Trending** — week-over-week growth analysis, writes two CSVs (`trending_all`, `trending_unknown`) that back the `/trending` API, and re-renders the centralized CloudFront dashboard (`index.html` — KPIs, volume charts, plus the 5 content-gap reports + trending section, all from `curated`).
    - **Content Gap** — writes 5 report CSVs (abandon rate, premium vs free, repeat search, hourly heatmap, guest vs auth) that back the HTTP API; SNS notification links to the CloudFront dashboard.
    - **LUT Refresh** — sends `UNKNOWN`-classified keywords to Bedrock Claude Haiku, rebuilds the classifier zip for the next Glue run, persists confirmed-unclassifiable verdicts so each run progresses.
 5. **Serve** — A key-protected HTTP API exposes the trending + content-gap reports as JSON with a `X-Data-Freshness` header.
@@ -33,9 +33,9 @@ This pipeline consumes 14 AWS services. Skim the table; you'll see each one in a
 |---|---|
 | **Amazon S3** | Four buckets — raw / stage / analytics / artifacts — partitioned the medallion way: raw (immutable), curated (enriched), gold (pre-computed). |
 | **AWS Lake Formation** | Column-level RBAC on the `curated` table. Once `IAM_ALLOWED_PRINCIPALS` is revoked (chapter 3.5), every read goes through LF. |
-| **AWS Glue** | (a) The 4.0 / Spark 3.3 ETL job, G.1X × 10 workers, ~25 min for the 14-day set; (b) the catalog hosting `raw_search_events`, `curated`, `keyword_trends`, `dq_results`, and the 5 content-gap report tables. |
-| **AWS Glue Data Quality** | Two ruleset evaluations — one over the curated table (post-Stage B), one over the gold table (post-Trending Lambda). |
-| **AWS Step Functions** | Four state machines (`mainA` event routing, `mainB` Glue orchestration, `mainDQ` + `mainGoldDQ` quality gates). |
+| **AWS Glue** | (a) The 4.0 / Spark 3.3 ETL job, G.1X × 10 workers, ~25 min for the 14-day set; (b) the catalog hosting `raw_search_events`, `curated`, `dq_results`, the 5 content-gap report tables, and `trending_all`/`trending_unknown`. |
+| **AWS Glue Data Quality** | One ruleset evaluation over the curated table (post-Stage B). |
+| **AWS Step Functions** | Three state machines (`mainA` event routing, `mainB` Glue orchestration, `mainDQ` quality gate). |
 | **Amazon EventBridge** | Routes S3 ObjectCreated → Stage A; chains `Stage A SUCCEEDED` → `Stage B`; fans `DQ SUCCEEDED` to the three analytics Lambdas. |
 | **AWS Lambda** | Four Python 3.12 functions — `mainTR-report`, `mainCG-report`, `mainLUT-refresh` (x86_64, on the SDLF datalake-library Layer) + `sdlf-ott-api` (arm64, no Layer). All four have X-Ray active tracing. |
 | **Amazon API Gateway (HTTP API v2)** | `GET /trending` and `GET /content-gaps`. Auth via in-Lambda `x-api-key` check (the key is in SSM at `/sdlf/ott/api-key/prod`). |
@@ -44,7 +44,7 @@ This pipeline consumes 14 AWS services. Skim the table; you'll see each one in a
 | **Amazon SQS** | Five DLQs (Stage A/B + the three analytics Lambdas) — all with depth alarms. |
 | **Amazon SNS** | Operational notifications: SM failures, DLQ depth, daily report delivery (linking to the CloudFront dashboard). |
 | **AWS KMS** | One customer-managed key encrypts every S3 bucket, every SQS DLQ, every CloudWatch log group. |
-| **Amazon CloudWatch** | A single dashboard + 18 alarms covering Step Functions failures (Stage A/B/DQ/Gold DQ), Glue runtime, Lambda errors/throttles/duration, and all 5 DLQ depths. |
+| **Amazon CloudWatch** | A single dashboard + 17 alarms covering Step Functions failures (Stage A/B/DQ), Glue runtime, Lambda errors/throttles/duration, and all 5 DLQ depths. |
 
 ---
 
@@ -87,8 +87,8 @@ This pipeline consumes 14 AWS services. Skim the table; you'll see each one in a
                   ▼                    ▼                    ▼
          ┌────────────────┐   ┌────────────────┐   ┌────────────────┐
          │ Trending λ     │   │ Content Gap λ  │   │ LUT Refresh λ  │
-         │ Athena + CTAS  │   │ 5 report CSVs  │   │ Bedrock Claude │
-         │ → gold + dash  │   │ → API source   │   │ → classifier   │
+         │ Athena CSVs +  │   │ 5 report CSVs  │   │ Bedrock Claude │
+         │ CloudFront dash│   │ → API source   │   │ → classifier   │
          └────────┬───────┘   └────────┬───────┘   └────────┬───────┘
                   │                    │                    │
                   └─────────┬──────────┘                    │

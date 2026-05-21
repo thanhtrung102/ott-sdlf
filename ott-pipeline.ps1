@@ -244,27 +244,19 @@ if (-not $SkipDeploy -and -not $AnalyticsOnly) {
         "pAthenaWorkgroupKmsKey=$KmsKey"
     )
 
-    # 8. Gold DQ SM — keyword_trends table, triggered by Trending Lambda
-    Deploy-Stack "sdlf-pipeline-ott-goldquality" "$Tpl\pipeline-ott-dq-stage.yaml" @(
-        "pStageName=mainGoldDQ",
-        "pDatabaseName=fpt_ott_searchevents_gold",
-        "pTableName=keyword_trends",
-        "pRulesetName=fpt_ott_searchevents_gold_keyword_trends",
-        "pCrawlerName=sdlf-searchevents-analytics-crawler",
-        "pCrawlerRoleArn=$CrawlerRoleArn",
-        "pStageBucket=$StageBucket",
-        "pDataReadBucket=$AnalyticsBucket",
-        "pDataReadPrefix=ott/searchevents/gold/",
-        "pResultsS3Prefix=dq-results/ott/gold",
-        "pTriggerType=customEvent",
-        "pCustomEventSource=sdlf.ott.trending",
-        "pCustomEventDetailType=Trending Report Completed",
-        "pExportRoles=false",
-        "pStageBSmArn=",
-        "pKmsKeyArn=$KmsKey"
-    )
+    # Gold layer was removed (the keyword_trends CTAS + Gold DQ had no
+    # user-facing consumer — the dashboard sources curated directly; the API
+    # serves CSV files). Delete the legacy goldquality stack if it exists.
+    $goldStatus = (aws cloudformation describe-stacks --stack-name sdlf-pipeline-ott-goldquality `
+        --region $Region --query "Stacks[0].StackStatus" --output text 2>$null)
+    if ($goldStatus -and $goldStatus -ne "None") {
+        Write-Host "  deleting legacy sdlf-pipeline-ott-goldquality stack ($goldStatus) ..." -NoNewline
+        aws cloudformation delete-stack --stack-name sdlf-pipeline-ott-goldquality --region $Region 2>&1 | Out-Null
+        aws cloudformation wait stack-delete-complete --stack-name sdlf-pipeline-ott-goldquality --region $Region 2>&1 | Out-Null
+        Write-Host " OK" -ForegroundColor Green
+    }
 
-    # 9. REST API — pApiKey sourced from SSM (generated once with scripts/rotate_api_key.py)
+    # 8. REST API — pApiKey sourced from SSM (generated once with scripts/rotate_api_key.py)
     $ApiKey = (aws ssm get-parameter --name "/sdlf/ott/api-key/prod" `
         --query "Parameter.Value" --output text --region $Region 2>$null)
     if ((-not $ApiKey) -or $ApiKey -eq "None") {
@@ -274,38 +266,17 @@ if (-not $SkipDeploy -and -not $AnalyticsOnly) {
         "pApiKey=$ApiKey"
     )
 
-    # 10. Lake Formation column-level RBAC (fully SSM-defaulted)
+    # 9. Lake Formation column-level RBAC (fully SSM-defaulted)
     Deploy-Stack "sdlf-pipeline-ott-lakeformation" "$Tpl\pipeline-ott-lakeformation.yaml"
 
-    # DATA_LOCATION_ACCESS for the Trending role's CTAS to the gold prefix in the
-    # LF-registered analytics bucket. Granted via CLI, not CFN: the
-    # AWS::LakeFormation::PrincipalPermissions DataLocation resource has a known
-    # stabilization issue. Idempotent — safe to re-run.
-    Write-Host "  granting LF DATA_LOCATION_ACCESS to Trending role ..." -NoNewline
-    $trendingRole = (aws ssm get-parameter --name "/sdlf/pipeline/rRole/ott-mainTR" `
-        --query "Parameter.Value" --output text --region $Region 2>$null)
-    if ($trendingRole -and $trendingRole -ne "None") {
-        $lfResource = '{"DataLocation":{"CatalogId":"' + $Account + `
-            '","ResourceArn":"arn:aws:s3:::' + $AnalyticsBucket + '/ott/searchevents/gold/"}}'
-        aws lakeformation grant-permissions `
-            --principal "DataLakePrincipalIdentifier=$trendingRole" `
-            --resource $lfResource `
-            --permissions DATA_LOCATION_ACCESS `
-            --region $Region 2>&1 | Out-Null
-        Write-Host " OK" -ForegroundColor Green
-    } else {
-        Write-Host ""
-        Write-Warn "Trending role SSM param /sdlf/pipeline/rRole/ott-mainTR not found — skipping LF grant"
-    }
-
-    # 11. Monitoring dashboards + alarms (fully SSM-defaulted)
+    # 10. Monitoring dashboards + alarms (fully SSM-defaulted)
     Deploy-Stack "sdlf-pipeline-ott-monitoring" "$Tpl\pipeline-ott-monitoring.yaml"
 
-    # 12. Dashboard hosting — private S3 bucket + CloudFront (OAC). The Trending
+    # 11. Dashboard hosting — private S3 bucket + CloudFront (OAC). The Trending
     # Lambda's write_dashboard() publishes the search-analytics dashboard here.
     Deploy-Stack "sdlf-pipeline-ott-dashboard" "$Tpl\pipeline-ott-dashboard.yaml"
 
-    Write-OK "All 12 stacks deployed"
+    Write-OK "All 11 stacks deployed"
 }
 
 # ── Ingest trigger + Stage A → B → DQ wait ────────────────────────────────────

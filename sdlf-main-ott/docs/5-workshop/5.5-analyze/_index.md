@@ -15,12 +15,9 @@ The DQ state machine just emitted `DQ SUCCEEDED`. Three Lambdas fan out from tha
 ```
 DQ SM SUCCEEDED
    │
-   ├─► Trending Lambda  ── Athena ── gold.keyword_trends + CSVs ── EventBridge "Trending Report Completed"
-   │                                                                       │
-   │                                                                       ▼
-   │                                                              Gold DQ State Machine
+   ├─► Trending Lambda  ── Athena (CSVs + 9 concurrent queries) ── CloudFront index.html
    │
-   ├─► Content Gap Lambda ── 5 Athena queries ── CSVs + HTML dashboard ── SNS
+   ├─► Content Gap Lambda ── 5 Athena queries ── CSVs (back the /content-gaps API) ── SNS
    │
    └─► LUT-Refresh Lambda ── Top-N UNKNOWN keywords ── Bedrock Claude ── classifier zip
 ```
@@ -47,20 +44,20 @@ aws lambda invoke --function-name sdlf-ott-mainTR-report --region ap-southeast-1
 Get-Content C:\tmp\trending-out.json
 ```
 
-**Expected** (live 2026-05-20 — rows vary with the latest dt partition you ingested):
+**Expected** (live — rows vary with the latest dt partition you ingested):
 
 ```json
 {
-  "dt": "2022-06-22",
+  "dt": "2022-06-23",
   "mode": "fallback/volume-only",
   "reports": {
-    "trending_all": 545,
-    "trending_unknown": 25,
-    "gold_rows": 13546
+    "trending_all": 598,
+    "trending_unknown": 33,
+    "dashboard_bytes": 33145
   },
   "prefixes": {
-    "all": "s3://...-stage-prod/analytics/trending/all/2022-06-22/",
-    "unknown": "s3://...-stage-prod/analytics/trending/unknown/2022-06-22/"
+    "all": "s3://...-stage-prod/analytics/trending/all/2022-06-23/",
+    "unknown": "s3://...-stage-prod/analytics/trending/unknown/2022-06-23/"
   },
   "errors": 0
 }
@@ -68,20 +65,7 @@ Get-Content C:\tmp\trending-out.json
 
 > `mode: fallback/volume-only` indicates fewer than 4 weeks of historical data — the growth comparison falls back to raw volume ranking. With ≥4 weeks ingested, `mode` becomes `growth >=3.0x`.
 
-**Verify** the gold table:
-
-```sql
-SELECT COUNT(*) AS gold_rows,
-       COUNT(DISTINCT keyword_norm) AS unique_keywords
-FROM fpt_ott_searchevents_gold.keyword_trends;
-```
-
-**Expected** (live 2026-05-20 — exact numbers vary):
-
-```
-gold_rows    unique_keywords
-13546        1686
-```
+`dashboard_bytes` is the size of the freshly-rendered `index.html` published to the CloudFront-fronted dashboard bucket — see [§5.6.3](../5.6-verify/#563-the-dashboard).
 
 ---
 

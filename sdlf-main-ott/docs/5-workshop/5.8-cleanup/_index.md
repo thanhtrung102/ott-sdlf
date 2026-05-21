@@ -30,7 +30,7 @@ We'll re-enable / re-delete at the end.
 
 ---
 
-## 5.8.2 Delete the 12 OTT-managed stacks
+## 5.8.2 Delete the 11 OTT-managed stacks
 
 Reverse dependency order. The script below deletes in the safest sequence (consumers first, producers last).
 
@@ -45,7 +45,6 @@ $ORDER = @(
   "sdlf-pipeline-ott-api",
   "sdlf-pipeline-ott-lakeformation",
   "sdlf-pipeline-ott-monitoring",
-  "sdlf-pipeline-ott-goldquality",
   "sdlf-pipeline-ott-trending",
   "sdlf-pipeline-ott-contentgap",
   "sdlf-pipeline-ott-lutrefresh",
@@ -69,7 +68,6 @@ Deleting sdlf-pipeline-ott-dashboard ... OK
 Deleting sdlf-pipeline-ott-api ... OK
 Deleting sdlf-pipeline-ott-lakeformation ... OK
 Deleting sdlf-pipeline-ott-monitoring ... OK
-Deleting sdlf-pipeline-ott-goldquality ... OK
 Deleting sdlf-pipeline-ott-trending ... OK
 Deleting sdlf-pipeline-ott-contentgap ... OK
 Deleting sdlf-pipeline-ott-lutrefresh ... OK

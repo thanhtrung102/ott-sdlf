@@ -19,10 +19,9 @@ pre: " <b> 5. </b> "
 A production-grade serverless data lake that turns raw OTT search-event Parquet into:
 
 - a curated table partitioned by date and genre,
-- a gold table of week-over-week keyword rankings,
-- five daily analytics reports (content gap, premium-vs-free, repeat-search, hourly heatmap, guest-vs-auth),
-- a static dashboard,
-- a key-protected HTTP API,
+- five daily analytics reports (content gap, premium-vs-free, repeat-search, hourly heatmap, guest-vs-auth) + trending,
+- a centralized stakeholder dashboard on CloudFront (KPIs + volume + the five business reports + trending),
+- a key-protected HTTP API exposing the same reports as JSON,
 - and 17 CloudWatch alarms covering every failure mode.
 
 The reference dataset is **14 days of June 2022 FPT Play search events (~1.3 M events/day)**. The pipeline is region-locked to **`ap-southeast-1` (Singapore)**.
@@ -35,7 +34,7 @@ The reference dataset is **14 days of June 2022 FPT Play search events (~1.3 M e
 |---|---|---|---|
 | 5.1 | [Overview](5.1-overview/) | 5 min | Architecture map + the 14 AWS services this pipeline uses |
 | 5.2 | [Prerequisites](5.2-prerequisites/) | 10 min | AWS account, IAM bootstrap, region, Bedrock model enablement |
-| 5.3 | [Deploy](5.3-deploy/) | 15 min | SDLF foundation + 12 OTT CloudFormation stacks (via CI/CD or PowerShell) |
+| 5.3 | [Deploy](5.3-deploy/) | 15 min | SDLF foundation + 11 OTT CloudFormation stacks (via CI/CD or PowerShell) |
 | 5.4 | [Ingest](5.4-ingest/) | 30 min | Drop a raw Parquet, watch Stage A → B → DQ fire automatically |
 | 5.5 | [Analyze](5.5-analyze/) | 10 min | Trigger the three analytics Lambdas, read the JSON + dashboard |
 | 5.6 | [Verify](5.6-verify/) | 5 min | 16-assertion contract test, audit visuals, live API call |
@@ -53,8 +52,8 @@ For the full 14-day reference dataset, end-to-end:
 | Glue (G.1X × 10 workers, ~25 min) | One ETL run | ~$1.30 |
 | Athena (scanned data) | ~5 reports × 1 GB scan | ~$0.025 |
 | Lambda (4 functions × ~3 min total invocations) | Per run | <$0.01 |
-| S3 (raw + stage + analytics + gold, ~5 GB total) | Storage | ~$0.12/month |
-| CloudWatch (logs + dashboard + 18 alarms) | Standing | ~$1.00/month |
+| S3 (raw + stage + analytics, ~5 GB total) | Storage | ~$0.12/month |
+| CloudWatch (logs + dashboard + 17 alarms) | Standing | ~$1.00/month |
 | Bedrock (Claude Haiku, LUT-refresh) | Per refresh, ~10 k tokens | ~$0.05 |
 | **Total per full run** | | **<$3** |
 
@@ -88,7 +87,7 @@ S3 raw drop ─► EventBridge ─► Stage A SM ─► Stage B SM ─► Glue E
         Trending Lambda          Content Gap Lambda                     LUT-Refresh Lambda
                 │                          │                                     │
                 ▼                          ▼                                     ▼
-        gold.keyword_trends    CSVs + HTML dashboard               classifier zip (S3)
+       CSVs + CloudFront dashboard   5 CSVs + SNS notification     classifier zip (S3)
                 │                          │
                 └──────────────┬───────────┘
                                ▼

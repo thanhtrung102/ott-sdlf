@@ -38,14 +38,6 @@ Parameters:
   pKmsKeyArn:
     Type: AWS::SSM::Parameter::Value<String>
     Default: /sdlf/storage/rKMSKey/prod
-  pGoldDatabaseName:
-    Type: String
-    Default: fpt_ott_searchevents_gold
-    Description: Glue database for the gold keyword_trends table
-  pGoldBucket:
-    Type: AWS::SSM::Parameter::Value<String>
-    Default: /sdlf/storage/rAnalyticsBucket/prod
-    Description: S3 bucket that holds the gold layer
   pAthenaResultsBucket:
     Type: String
     Description: Bucket enforced by the sdlf-ott Athena workgroup for query results
@@ -113,32 +105,6 @@ Resources:
                   - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:catalog
                   - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/${pDatabaseName}
                   - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/${pDatabaseName}/*
-              - Effect: Allow
-                Action:
-                  - glue:GetDatabase
-                  - glue:GetTable
-                  - glue:GetPartitions
-                  - glue:CreateTable
-                  - glue:DeleteTable
-                  - glue:UpdateTable
-                  - glue:BatchCreatePartition
-                Resource:
-                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:catalog
-                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/${pGoldDatabaseName}
-                  - !Sub arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/${pGoldDatabaseName}/*
-              - Effect: Allow
-                Action:
-                  - s3:GetBucketLocation
-                  - s3:ListBucket
-                Resource:
-                  - !Sub arn:${AWS::Partition}:s3:::${pGoldBucket}
-              - Effect: Allow
-                Action:
-                  - s3:GetObject
-                  - s3:PutObject
-                  - s3:DeleteObject
-                Resource:
-                  - !Sub arn:${AWS::Partition}:s3:::${pGoldBucket}/ott/searchevents/gold/*
               # write_dashboard() publishes index.html to the CloudFront-fronted
               # dashboard bucket (sdlf-pipeline-ott-dashboard) after every run.
               - Effect: Allow
@@ -162,11 +128,6 @@ Resources:
                   - sns:Publish
                 Resource:
                   - !Ref pSnsTopicArn
-              - Effect: Allow
-                Action:
-                  - events:PutEvents
-                Resource:
-                  - !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/default
               - Effect: Allow
                 Action:
                   - sqs:SendMessage
@@ -243,8 +204,6 @@ Resources:
           MIN_GROWTH_MULTIPLIER: !Sub "${pMinGrowthMultiplier}"
           MIN_SEARCH_VOLUME: !Sub "${pMinSearchVolume}"
           MAX_TRENDING_ROWS: !Sub "${pMaxTrendingRows}"
-          GOLD_DATABASE: !Ref pGoldDatabaseName
-          GOLD_LOCATION: !Sub s3://${pGoldBucket}/ott/searchevents/gold/keyword_trends/
           DASHBOARD_BUCKET: !Sub fpt-ott-${AWS::Region}-${AWS::AccountId}-dashboard-prod
           ATHENA_WORKGROUP: sdlf-ott
           TEAM: ott
@@ -312,14 +271,6 @@ Resources:
       Description: IAM role ARN for the OTT Trending Lambda (used by LF stack)
 
   ######## GLUE CATALOG ########
-
-  rGoldDatabase:
-    Type: AWS::Glue::Database
-    Properties:
-      CatalogId: !Ref AWS::AccountId
-      DatabaseInput:
-        Name: !Ref pGoldDatabaseName
-        Description: Gold layer — ranked keyword trends for the OTT search pipeline
 
   rTrendingAllTable:
     Type: AWS::Glue::Table
@@ -409,60 +360,6 @@ Resources:
               Type: boolean
         PartitionKeys:
           - Name: dt
-            Type: date
-
-  rKeywordTrendsTable:
-    Type: AWS::Glue::Table
-    DependsOn: rGoldDatabase
-    Properties:
-      CatalogId: !Ref AWS::AccountId
-      DatabaseName: !Ref pGoldDatabaseName
-      TableInput:
-        Name: keyword_trends
-        Description: Gold-layer keyword rankings — per-keyword×platform×genre×date, partitioned by trend_date
-        TableType: EXTERNAL_TABLE
-        Parameters:
-          classification: parquet
-          projection.enabled: "true"
-          projection.trend_date.type: date
-          projection.trend_date.format: yyyy-MM-dd
-          projection.trend_date.range: "2022-06-01,2022-09-01"
-          projection.trend_date.interval: "1"
-          projection.trend_date.interval.unit: DAYS
-          storage.location.template: !Sub s3://${pGoldBucket}/ott/searchevents/gold/keyword_trends/trend_date=${!trend_date}/
-        StorageDescriptor:
-          Location: !Sub s3://${pGoldBucket}/ott/searchevents/gold/keyword_trends/
-          InputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat
-          OutputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
-          SerdeInfo:
-            SerializationLibrary: org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
-          Columns:
-            - Name: keyword_norm
-              Type: string
-            - Name: platform_group
-              Type: string
-            - Name: derived_genre
-              Type: string
-            - Name: search_count
-              Type: bigint
-            - Name: enter_count
-              Type: bigint
-            - Name: abandoned_count
-              Type: bigint
-            - Name: abandon_rate_pct
-              Type: double
-            - Name: unique_users
-              Type: bigint
-            - Name: rank_today
-              Type: int
-            - Name: rank_7d_ago
-              Type: int
-            - Name: is_new_entrant
-              Type: boolean
-            - Name: rank_improvement
-              Type: int
-        PartitionKeys:
-          - Name: trend_date
             Type: date
 
 Outputs:

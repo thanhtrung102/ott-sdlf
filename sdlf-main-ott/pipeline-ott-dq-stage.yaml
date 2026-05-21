@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  OTT Data Quality Stage — reusable; deployed twice:
-  sdlf-pipeline-ott-dataquality (curated table after Stage B) and
-  sdlf-pipeline-ott-goldquality (gold keyword_trends after Trending Lambda).
+  OTT Data Quality Stage — deployed as sdlf-pipeline-ott-dataquality
+  (DQ ruleset evaluation on the curated table after Stage B). The template
+  remains parameterised on pStageName/pTriggerType for reuse.
 
 Parameters:
   pPipelineReference:

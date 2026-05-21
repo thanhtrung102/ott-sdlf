@@ -35,25 +35,21 @@ phases:
       - PROJECT_KMS_ARN=$(aws s3api get-bucket-encryption --bucket "ott-search-${ACCOUNT}-prod" --region $REGION --query "ServerSideEncryptionConfiguration.Rules[0].ApplyServerSideEncryptionByDefault.KMSMasterKeyID" --output text)
       - echo "Account $ACCOUNT  KMS $KMS_KEY  AthenaResultsBucket $ATHENA_RESULTS_BUCKET  AthenaWgKms $ATHENA_WG_KMS  ProjectKms $PROJECT_KMS_ARN  ApiKeyLen ${#API_KEY}"
       - |
-        # One-time migration: delete gold quality stack if it is on the old separate template.
-        # Detection: old template has no pStageName parameter; new unified template always has it.
-        # Safe to re-run: once on the new template the length check returns 1 and this is skipped.
-        GOLD_HAS_NEW=$(aws cloudformation describe-stacks \
+        # Gold layer removed — the keyword_trends CTAS, gold database, and
+        # Gold DQ state machine had no user-facing consumer (the dashboard
+        # sources curated directly; the API serves CSV files). Delete the
+        # legacy goldquality stack if it still exists. Idempotent: no-op on
+        # fresh deployments where the stack never existed.
+        GOLD_STATUS=$(aws cloudformation describe-stacks \
           --stack-name sdlf-pipeline-ott-goldquality --region $REGION \
-          --query "length(Stacks[0].Parameters[?ParameterKey=='pStageName'])" \
-          --output text 2>/dev/null || echo "0")
-        if [ "$GOLD_HAS_NEW" = "0" ]; then
-          echo "Migrating sdlf-pipeline-ott-goldquality to unified DQ template..."
-          GOLD_STATUS=$(aws cloudformation describe-stacks \
-            --stack-name sdlf-pipeline-ott-goldquality --region $REGION \
-            --query "Stacks[0].StackStatus" --output text 2>/dev/null || echo "NOT_FOUND")
-          if [ "$GOLD_STATUS" != "NOT_FOUND" ]; then
-            aws cloudformation delete-stack \
-              --stack-name sdlf-pipeline-ott-goldquality --region $REGION
-            aws cloudformation wait stack-delete-complete \
-              --stack-name sdlf-pipeline-ott-goldquality --region $REGION
-          fi
-          echo "Migration delete complete."
+          --query "Stacks[0].StackStatus" --output text 2>/dev/null || echo "NOT_FOUND")
+        if [ "$GOLD_STATUS" != "NOT_FOUND" ]; then
+          echo "Deleting legacy sdlf-pipeline-ott-goldquality stack ($GOLD_STATUS)..."
+          aws cloudformation delete-stack \
+            --stack-name sdlf-pipeline-ott-goldquality --region $REGION
+          aws cloudformation wait stack-delete-complete \
+            --stack-name sdlf-pipeline-ott-goldquality --region $REGION
+          echo "Goldquality stack deleted."
         fi
 
   build:
@@ -129,43 +125,12 @@ phases:
           pAthenaWorkgroupKmsKey=${ATHENA_WG_KMS}
 
         deploy sdlf-pipeline-ott-trending sdlf-main-ott/pipeline-ott-trending.yaml \
-          pGoldDatabaseName=fpt_ott_searchevents_gold \
-          pGoldBucket=/sdlf/storage/rAnalyticsBucket/prod \
           pAthenaResultsBucket=${ATHENA_RESULTS_BUCKET} \
           pAthenaWorkgroupKmsKey=${ATHENA_WG_KMS}
-
-        deploy sdlf-pipeline-ott-goldquality sdlf-main-ott/pipeline-ott-dq-stage.yaml \
-          pStageName=mainGoldDQ \
-          pDatabaseName=fpt_ott_searchevents_gold \
-          pTableName=keyword_trends \
-          pRulesetName=fpt_ott_searchevents_gold_keyword_trends \
-          pCrawlerName=${CURATED_CRAWLER} \
-          pCrawlerRoleArn=${CRAWLER_ROLE} \
-          pStageBucket=${STAGE_BUCKET} \
-          pKmsKeyArn=${KMS_KEY} \
-          pDataReadBucket=${ANALYTICS_BUCKET} \
-          pDataReadPrefix=ott/searchevents/gold/ \
-          pResultsS3Prefix=dq-results/ott/gold \
-          pTriggerType=customEvent \
-          pCustomEventSource=sdlf.ott.trending \
-          "pCustomEventDetailType=Trending Report Completed" \
-          pExportRoles=false
 
         deploy sdlf-pipeline-ott-monitoring sdlf-main-ott/pipeline-ott-monitoring.yaml
 
         deploy sdlf-pipeline-ott-lakeformation sdlf-main-ott/pipeline-ott-lakeformation.yaml
-
-        # DATA_LOCATION_ACCESS for Trending CTAS to gold prefix in LF-registered stage bucket.
-        # Managed via CLI (not CFN) — AWS::LakeFormation::PrincipalPermissions for DataLocation
-        # has a known CFN stabilization issue. Grant is idempotent.
-        TRENDING_ROLE_ARN=$(aws ssm get-parameter --name "/sdlf/pipeline/rRole/ott-mainTR" \
-          --query "Parameter.Value" --output text --region $REGION)
-        aws lakeformation grant-permissions \
-          --principal "DataLakePrincipalIdentifier=${TRENDING_ROLE_ARN}" \
-          --resource "{\"DataLocation\":{\"CatalogId\":\"${ACCOUNT}\",\"ResourceArn\":\"arn:aws:s3:::${ANALYTICS_BUCKET}/ott/searchevents/gold/\"}}" \
-          --permissions DATA_LOCATION_ACCESS \
-          --region $REGION || true
-        echo "DATA_LOCATION_ACCESS grant applied for $TRENDING_ROLE_ARN"
 
         deploy sdlf-pipeline-ott-api sdlf-main-ott/pipeline-ott-api.yaml \
           pApiKey=${API_KEY}
@@ -187,7 +152,6 @@ phases:
           sdlf-pipeline-ott-lutrefresh \
           sdlf-pipeline-ott-contentgap \
           sdlf-pipeline-ott-trending \
-          sdlf-pipeline-ott-goldquality \
           sdlf-pipeline-ott-monitoring \
           sdlf-pipeline-ott-lakeformation \
           sdlf-pipeline-ott-api \

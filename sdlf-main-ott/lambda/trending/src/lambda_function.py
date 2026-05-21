@@ -13,7 +13,6 @@ logger = init_logger(__name__)
 athena  = boto3.client("athena")
 s3      = boto3.client("s3")
 sns     = boto3.client("sns")
-events  = boto3.client("events")
 
 DB               = os.environ["ATHENA_DATABASE"]
 RESULTS          = os.environ["ATHENA_RESULTS"]
@@ -76,103 +75,6 @@ SELECT COUNT(*) AS cnt FROM {db}.curated
 WHERE dt >= '{base_start}' AND dt < '{base_end}' AND keyword_norm IS NOT NULL AND keyword_norm != ''
 """
 
-# Gold-layer CTAS: per-keyword x platform x genre x date rankings.
-# Written to staging first; swapped to production only after row count validates.
-# Prevents an empty/partial gold table if the CTAS fails mid-write.
-_GOLD_CTAS_SQL = """
-CREATE TABLE {table_name}
-WITH (
-    format              = 'PARQUET',
-    parquet_compression = 'SNAPPY',
-    external_location   = '{gold_location}',
-    partitioned_by      = ARRAY['trend_date']
-)
-AS
-WITH agg AS (
-    SELECT
-        keyword_norm,
-        platform_group,
-        derived_genre,
-        dt                                                                 AS trend_date,
-        CAST(COUNT(*)                                           AS bigint) AS search_count,
-        -- session_action is 'SUBMIT' in current ETL output; older partitions
-        -- used the raw 'enter'. Match both so enter_count is correct across a
-        -- mixed-vintage curated table and after a full re-classification run.
-        CAST(SUM(CASE WHEN session_action IN ('SUBMIT', 'enter') THEN 1 ELSE 0 END)
-                                                                AS bigint) AS enter_count,
-        CAST(SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END)
-                                                                AS bigint) AS abandoned_count,
-        ROUND(CAST(SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END) AS double)
-              / CAST(COUNT(*) AS double) * 100, 2)                        AS abandon_rate_pct,
-        CAST(COUNT(DISTINCT user_id_hashed)                     AS bigint) AS unique_users
-    FROM {curated_db}.curated
-    WHERE keyword_norm IS NOT NULL AND keyword_norm != ''
-    GROUP BY keyword_norm, platform_group, derived_genre, dt
-    HAVING COUNT(*) >= {min_volume}
-),
-ranked AS (
-    SELECT *,
-        CAST(RANK() OVER (
-            PARTITION BY platform_group, derived_genre, trend_date
-            ORDER BY search_count DESC
-        ) AS integer) AS rank_today
-    FROM agg
-),
-prev_agg AS (
-    SELECT
-        keyword_norm,
-        platform_group,
-        derived_genre,
-        trend_date                                                         AS trend_date_7d,
-        CAST(RANK() OVER (
-            PARTITION BY platform_group, derived_genre, trend_date
-            ORDER BY search_count DESC
-        ) AS integer) AS rank_prev
-    FROM agg
-),
-prev_best AS (
-    SELECT
-        r.trend_date                                                       AS for_date,
-        p.keyword_norm,
-        p.platform_group,
-        p.derived_genre,
-        p.rank_prev,
-        ROW_NUMBER() OVER (
-            PARTITION BY r.trend_date, p.keyword_norm, p.platform_group, p.derived_genre
-            ORDER BY ABS(date_diff('day', date(p.trend_date_7d), date(r.trend_date)) - 7)
-        )                                                                  AS rn
-    FROM ranked r
-    JOIN prev_agg p
-      ON r.keyword_norm   = p.keyword_norm
-     AND r.platform_group = p.platform_group
-     AND r.derived_genre  = p.derived_genre
-     AND date_diff('day', date(p.trend_date_7d), date(r.trend_date)) BETWEEN 5 AND 9
-)
-SELECT
-    r.keyword_norm,
-    r.platform_group,
-    r.derived_genre,
-    r.search_count,
-    r.enter_count,
-    r.abandoned_count,
-    r.abandon_rate_pct,
-    r.unique_users,
-    r.rank_today,
-    p.rank_prev                                                            AS rank_7d_ago,
-    CASE WHEN p.rank_prev IS NULL THEN true ELSE false END                 AS is_new_entrant,
-    CASE WHEN p.rank_prev IS NULL THEN NULL
-         ELSE p.rank_prev - r.rank_today END                              AS rank_improvement,
-    r.trend_date
-FROM ranked r
-LEFT JOIN prev_best p
-       ON p.for_date      = r.trend_date
-      AND p.keyword_norm   = r.keyword_norm
-      AND p.platform_group = r.platform_group
-      AND p.derived_genre  = r.derived_genre
-      AND p.rn             = 1
-"""
-
-
 def athena_query(sql):
     r = athena.start_query_execution(
         QueryString=sql,
@@ -197,23 +99,6 @@ def athena_query(sql):
                 continue
             rows.append(dict(zip(headers, values)))
     return headers or [], rows
-
-
-def athena_ddl(sql):
-    """Run a DDL statement (no result rows expected)."""
-    r = athena.start_query_execution(
-        QueryString=sql,
-        ResultConfiguration={"OutputLocation": RESULTS},
-        WorkGroup=WORKGROUP,
-    )
-    qid = r["QueryExecutionId"]
-    while True:
-        st = athena.get_query_execution(QueryExecutionId=qid)["QueryExecution"]["Status"]["State"]
-        if st == "SUCCEEDED":
-            return
-        if st in ("FAILED", "CANCELLED"):
-            raise RuntimeError(f"DDL {st}: {qid}")
-        time.sleep(3)
 
 
 def write_csv(key, headers, rows):
@@ -264,95 +149,6 @@ def run_trending_query(cur_start, cur_end, base_start, base_end, use_fallback, g
     return athena_query(sql)
 
 
-def _list_s3_keys(s3_url):
-    bucket, prefix = s3_url.replace("s3://", "").split("/", 1)
-    keys = set()
-    for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix):
-        for obj in page.get("Contents", []):
-            keys.add(obj["Key"])
-    return bucket, prefix, keys
-
-
-def _empty_s3_prefix(s3_url):
-    bucket, _, keys = _list_s3_keys(s3_url)
-    if keys:
-        batch = [{"Key": k} for k in keys]
-        for i in range(0, len(batch), 1000):
-            s3.delete_objects(Bucket=bucket, Delete={"Objects": batch[i:i+1000]})
-
-
-def _copy_s3_prefix(src_url, dst_url):
-    """Copy src→dst, return set of destination keys written."""
-    src_bucket, src_prefix, _ = _list_s3_keys(src_url)
-    dst_bucket, dst_prefix = dst_url.replace("s3://", "").split("/", 1)
-    written = set()
-    for page in s3.get_paginator("list_objects_v2").paginate(Bucket=src_bucket, Prefix=src_prefix):
-        for obj in page.get("Contents", []):
-            src_key = obj["Key"]
-            dst_key = dst_prefix + src_key[len(src_prefix):]
-            s3.copy_object(
-                CopySource={"Bucket": src_bucket, "Key": src_key},
-                Bucket=dst_bucket,
-                Key=dst_key,
-            )
-            written.add(dst_key)
-    return dst_bucket, written
-
-
-def _ctas(table_name, location):
-    athena_ddl(_GOLD_CTAS_SQL.format(
-        table_name=table_name,
-        gold_location=location,
-        curated_db=DB,
-        min_volume=MIN_VOLUME,
-    ))
-
-
-def write_gold_table():
-    gold_db          = os.environ.get("GOLD_DATABASE", "fpt_ott_searchevents_gold")
-    gold_location    = os.environ.get("GOLD_LOCATION", "")
-    if not gold_location:
-        logger.warning("GOLD_LOCATION not set — skipping gold table write")
-        return 0
-
-    prod_table       = f"{gold_db}.keyword_trends"
-    staging_table    = f"{gold_db}.keyword_trends_staging"
-    staging_location = gold_location.rstrip("/") + "_staging/"
-
-    # Phase 1: CTAS to staging — production table untouched until validated.
-    athena_ddl(f"DROP TABLE IF EXISTS {staging_table}")
-    _empty_s3_prefix(staging_location)
-    _ctas(staging_table, staging_location)
-    _, cnt_rows = athena_query(f"SELECT COUNT(*) AS cnt FROM {staging_table}")
-    count = int(cnt_rows[0]["cnt"]) if cnt_rows else 0
-    if count == 0:
-        athena_ddl(f"DROP TABLE IF EXISTS {staging_table}")
-        _empty_s3_prefix(staging_location)
-        raise RuntimeError("Staging CTAS produced 0 rows — gold table unchanged")
-
-    # Phase 2: Atomic swap — copy first, prune stale after.
-    # keyword_trends is a CFN-managed table with partition projection, so
-    # Athena discovers partitions from S3 automatically. The old pattern
-    # "empty production then copy" left a window where the gold table was
-    # empty mid-flight. New pattern: enumerate existing keys, copy all new
-    # keys (overwriting matching paths in place — each PutObject is atomic),
-    # then delete only the existing keys that the copy didn't replace.
-    _, _, before_keys = _list_s3_keys(gold_location)
-    dst_bucket, written_keys = _copy_s3_prefix(staging_location, gold_location)
-    stale = before_keys - written_keys
-    if stale:
-        batch = [{"Key": k} for k in stale]
-        for i in range(0, len(batch), 1000):
-            s3.delete_objects(Bucket=dst_bucket, Delete={"Objects": batch[i:i+1000]})
-
-    # Phase 3: Cleanup staging.
-    athena_ddl(f"DROP TABLE IF EXISTS {staging_table}")
-    _empty_s3_prefix(staging_location)
-
-    logger.info(f"Gold table written: {count} rows")
-    return count
-
-
 _GENRE_COLOR = {
     "PHIM_VIET": "#68d391", "ANIME": "#9f7aea", "PHIM_TRUNG": "#f6ad55",
     "PHIM_HAN": "#76e4f7", "PHIM_AU_MY": "#fc8181", "TRUYEN_HINH": "#fbd38d",
@@ -377,8 +173,7 @@ def _render_dashboard_html(totals, platform, genre, keywords, trending,
 
     One stakeholder-facing page. Every figure is population-true — sourced
     from the unfiltered curated table. Sections: volume/genre/platform KPIs,
-    plus the five content-gap business reports and trending. The gold
-    keyword_trends table is a separate ranking product behind GET /trending.
+    plus the five content-gap business reports and trending.
     """
     total_searches  = int(totals.get("total", 0) or 0)
     distinct_kw     = int(totals.get("kw", 0) or 0)
@@ -932,13 +727,6 @@ def lambda_handler(event, context):
             errors += 1
 
     try:
-        summary["gold_rows"] = write_gold_table()
-    except Exception as e:
-        logger.error(f"Gold table write failed: {e}")
-        summary["gold_rows"] = -1
-        errors += 1
-
-    try:
         summary["dashboard_bytes"] = write_dashboard(trending_rows)
     except Exception as e:
         logger.error(f"Dashboard write failed: {e}")
@@ -951,7 +739,6 @@ def lambda_handler(event, context):
         f"Mode: {mode}\n"
         f"Trending keywords (all genres): {summary.get('trending_all', 0)}\n"
         f"Trending UNKNOWN (LUT targets): {summary.get('trending_unknown', 0)}\n"
-        f"Gold table rows written: {summary.get('gold_rows', 0)}\n"
         f"All:     s3://{STAGE_BUCKET}/{ANALYTICS_PREFIX}all/{dt}/\n"
         f"Unknown: s3://{STAGE_BUCKET}/{ANALYTICS_PREFIX}unknown/{dt}/\n"
         f"Errors: {errors}"
@@ -971,14 +758,9 @@ def lambda_handler(event, context):
         },
         "errors": errors,
     }
-    events.put_events(Entries=[{
-        "Source": "sdlf.ott.trending",
-        "DetailType": "Trending Report Completed",
-        "Detail": json.dumps(result),
-    }])
     logger.info(
         f"Trending report complete — all:{summary.get('trending_all',0)} "
         f"unknown:{summary.get('trending_unknown',0)} "
-        f"gold:{summary.get('gold_rows',0)} errors:{errors} mode:{mode}"
+        f"errors:{errors} mode:{mode}"
     )
     return result
