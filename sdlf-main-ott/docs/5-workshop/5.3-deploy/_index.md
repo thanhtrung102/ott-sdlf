@@ -32,7 +32,7 @@ Twelve CloudFormation stacks, in dependency order:
 6.  sdlf-pipeline-ott-contentgap     — Content-Gap Lambda + 5 catalog tables + DLQ
 7.  sdlf-pipeline-ott-trending       — Trending Lambda + gold catalog + DLQ
 8.  sdlf-pipeline-ott-goldquality    — Gold-layer DQ state machine
-9.  sdlf-pipeline-ott-monitoring     — CloudWatch dashboard + 17 alarms
+9.  sdlf-pipeline-ott-monitoring     — CloudWatch dashboard + 18 alarms
 10. sdlf-pipeline-ott-lakeformation  — Column-level RBAC on curated
 11. sdlf-pipeline-ott-api            — HTTP API (x-api-key, freshness headers, arm64)
 12. sdlf-pipeline-ott-dashboard      — S3 + CloudFront hosting for the search-analytics dashboard

@@ -74,6 +74,14 @@ Resources:
                   - s3:PutObject
                 Resource:
                   - !Sub arn:${AWS::Partition}:s3:::${pArtifactsBucket}/ott/searchevents/*
+              # Mirror the refreshed classifier into the Glue project bucket so
+              # the next Stage B run picks it up automatically. Closes the
+              # two-bucket hand-off the workshop previously called out.
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::ott-search-${AWS::AccountId}-prod/ott/searchevents/*
               - Effect: Allow
                 Action:
                   - s3:GetBucketLocation
@@ -186,6 +194,10 @@ Resources:
           ATHENA_RESULTS: !Sub s3://${pStageBucket}/athena-results/lut-refresh/
           ARTIFACTS_BUCKET: !Ref pArtifactsBucket
           ARTIFACTS_KEY: ott/searchevents/genre_classifier_pkg.zip
+          # save_lut() mirrors the refreshed zip here so the Glue ETL
+          # picks it up on the next Stage B run (closes the broken loop
+          # that previously required a manual copy).
+          PROJECT_BUCKET: !Sub ott-search-${AWS::AccountId}-prod
           BEDROCK_MODEL_ID: !Ref pBedrockModelId
           MAX_NEW_KEYWORDS: !Ref pMaxNewKeywords
           BATCH_SIZE: "50"

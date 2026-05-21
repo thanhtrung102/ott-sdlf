@@ -144,7 +144,7 @@ aws logs tail /aws/lambda/sdlf-ott-mainLUT-refresh --since 5m --follow --region 
 2026-05-20T... INFO LUT refresh complete. Added 4823 new entries (new total: 127488).
 ```
 
-> The LUT-Refresh Lambda writes to the SDLF artifacts bucket. The Glue job reads from the **project-specific bucket** (`ott-search-${ACCT}-prod/ott/searchevents/`). To make the refreshed classifier reach the next Glue run, copy the artifact across (or wire a CICD step). See [§5.2.5](../5.2-prerequisites/#525-the-genre-classifier-zip-and-glue-script) for why these are two buckets.
+> The LUT-Refresh Lambda writes the refreshed classifier zip to **both** the SDLF artifacts bucket (provenance) **and** the project-specific bucket `ott-search-${ACCT}-prod/ott/searchevents/` (which the Glue job reads `--extra-py-files` from). The mirror is wired inside `save_lut()` via the `PROJECT_BUCKET` env var + an `s3:PutObject` grant in `pipeline-ott-lutrefresh.yaml` — no manual copy or CICD step is needed, and the next Stage B run automatically uses the enriched LUT. See [§5.2.5](../5.2-prerequisites/#525-the-genre-classifier-zip-and-glue-script) for why the project bucket is separate from the SDLF artifacts bucket.
 
 ---
 

@@ -80,7 +80,7 @@ account=703668403514  region=ap-southeast-1
 
 === CloudWatch — dashboard + alarms ===
   [PASS] dashboard sdlf-ott-searchevents-pipeline
-  [PASS] sdlf-ott alarms deployed  (17 alarms)
+  [PASS] sdlf-ott alarms deployed  (18 alarms)
   [WARN] alarms currently in ALARM state  (sdlf-ott-mainB-dlq-not-empty, sdlf-ott-mainCG-report-near-timeout, sdlf-ott-mainLUT-refresh-near-timeout)
 
 === HTTP API — endpoints + auth + freshness ===
@@ -111,13 +111,13 @@ account=703668403514  region=ap-southeast-1
 | 5 | Orchestration | 4 Step Functions (`mainA/B/DQ/GoldDQ`) | All last executions `SUCCEEDED` |
 | 6 | Analytics compute | 4 Lambdas (`mainTR/mainCG/mainLUT/api`) | All deployed, Python 3.12 |
 | 7 | Failure isolation | 5 DLQs (Stage A/B FIFO + 3 analytics) | All depth 0 |
-| 8 | Observability | 1 dashboard + 17 alarms | All deployed |
+| 8 | Observability | 1 dashboard + 18 alarms | All deployed |
 | 9 | Serving layer | HTTP API v2 | 200 + freshness header; 401 without key |
 | 10 | Access control | Lake Formation on `curated` | Grant state reported (see 5.7.3) |
 
 That is the entire deployed surface — 11 stacks, 1 Glue job, 14 catalog tables
 (across 4 databases), 4 state machines, 13 Lambdas (4 analytics + 9 SDLF
-framework), 5 DLQs, 17 alarms, 1 HTTP API.
+framework), 5 DLQs, 18 alarms, 1 HTTP API.
 
 ---
 

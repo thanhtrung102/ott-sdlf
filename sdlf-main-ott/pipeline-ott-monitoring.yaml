@@ -275,6 +275,27 @@ Resources:
 
   ######## CLOUDWATCH ALARMS ########
 
+  rAlarmStageAFailed:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sdlf-ott-mainA-sm-execution-failed
+      AlarmDescription: Stage A SM has a failed execution — S3 event routing to Stage B is broken
+      Namespace: AWS/States
+      MetricName: ExecutionsFailed
+      Dimensions:
+        - Name: StateMachineArn
+          Value: !Ref pStageASmArn
+      Statistic: Sum
+      Period: !Ref pAlarmPeriodSeconds
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref pSnsTopicArn
+      OKActions:
+        - !Ref pSnsTopicArn
+
   rAlarmStageBFailed:
     Type: AWS::CloudWatch::Alarm
     Properties:

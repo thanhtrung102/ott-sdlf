@@ -14,14 +14,18 @@ athena  = boto3.client("athena")
 s3      = boto3.client("s3")
 bedrock = boto3.client("bedrock-runtime")
 
-DB         = os.environ["ATHENA_DATABASE"]
-RESULTS    = os.environ["ATHENA_RESULTS"]
-ART_BUCKET = os.environ["ARTIFACTS_BUCKET"]
-ART_KEY    = os.environ["ARTIFACTS_KEY"]
-MODEL_ID   = os.environ["BEDROCK_MODEL_ID"]
-MAX_KW     = int(os.environ["MAX_NEW_KEYWORDS"])
-BATCH_SZ   = int(os.environ["BATCH_SIZE"])
-THROTTLE   = float(os.environ["THROTTLE_SECONDS"])
+DB             = os.environ["ATHENA_DATABASE"]
+RESULTS        = os.environ["ATHENA_RESULTS"]
+ART_BUCKET     = os.environ["ARTIFACTS_BUCKET"]
+ART_KEY        = os.environ["ARTIFACTS_KEY"]
+# Project bucket the Glue ETL reads --extra-py-files from. save_lut() mirrors
+# the refreshed zip here so the next Stage B run actually uses it. Empty
+# string disables the mirror (back-compat for envs without the var).
+PROJECT_BUCKET = os.environ.get("PROJECT_BUCKET", "")
+MODEL_ID       = os.environ["BEDROCK_MODEL_ID"]
+MAX_KW         = int(os.environ["MAX_NEW_KEYWORDS"])
+BATCH_SZ       = int(os.environ["BATCH_SIZE"])
+THROTTLE       = float(os.environ["THROTTLE_SECONDS"])
 
 VALID = frozenset({
     "NHAC", "THE_THAO", "ANIME", "PHIM_TRUNG", "PHIM_VIET",
@@ -108,12 +112,26 @@ def save_lut(lut):
                     zout.writestr(info, lut_bytes)
                 else:
                     zout.writestr(info, zin.read(info.filename))
-    buf.seek(0)
+    zip_bytes = buf.getvalue()
     s3.put_object(
         Bucket=ART_BUCKET, Key=ART_KEY,
-        Body=buf.getvalue(), ContentType="application/zip",
+        Body=zip_bytes, ContentType="application/zip",
     )
     logger.info(f"Zip rebuilt: {len(lut)} LUT entries -> s3://{ART_BUCKET}/{ART_KEY}")
+    # Mirror to the project bucket the Glue ETL actually reads
+    # --extra-py-files from. Without this the refreshed classifier is a
+    # dead artifact and curated keeps using the stale LUT.
+    if PROJECT_BUCKET:
+        s3.put_object(
+            Bucket=PROJECT_BUCKET, Key=ART_KEY,
+            Body=zip_bytes, ContentType="application/zip",
+        )
+        logger.info(f"Zip mirrored to project bucket -> s3://{PROJECT_BUCKET}/{ART_KEY}")
+    else:
+        logger.warning(
+            "PROJECT_BUCKET not set — refreshed classifier NOT mirrored; "
+            "next Stage B run will use the stale LUT"
+        )
 
 
 def classify_batch(batch):

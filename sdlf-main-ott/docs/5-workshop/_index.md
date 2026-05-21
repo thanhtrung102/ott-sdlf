@@ -54,7 +54,7 @@ For the full 14-day reference dataset, end-to-end:
 | Athena (scanned data) | ~5 reports × 1 GB scan | ~$0.025 |
 | Lambda (4 functions × ~3 min total invocations) | Per run | <$0.01 |
 | S3 (raw + stage + analytics + gold, ~5 GB total) | Storage | ~$0.12/month |
-| CloudWatch (logs + dashboard + 17 alarms) | Standing | ~$1.00/month |
+| CloudWatch (logs + dashboard + 18 alarms) | Standing | ~$1.00/month |
 | Bedrock (Claude Haiku, LUT-refresh) | Per refresh, ~10 k tokens | ~$0.05 |
 | **Total per full run** | | **<$3** |
 
