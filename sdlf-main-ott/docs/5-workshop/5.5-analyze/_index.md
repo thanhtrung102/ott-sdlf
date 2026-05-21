@@ -106,15 +106,12 @@ Get-Content C:\tmp\cg-out.json
     "hour_of_day_heatmap": 216,
     "guest_vs_auth_demand": 9
   },
-  "report_url": "https://...-stage-prod.s3.ap-southeast-1.amazonaws.com/analytics/content-gap/report/2022-06-22/report.html?X-Amz-Algorithm=...",
+  "dashboard_url": "https://d3bdq70ai5wf18.cloudfront.net",
   "errors": 0
 }
 ```
 
-**Open the dashboard URL** from `report_url` — that's a 7-day presigned link to an HTML report with all 5 tables rendered.
-
-> 📷 **Screenshot —** the content-gap HTML report open in a browser: KPI tiles across the top, the five report tables (content gaps, premium-vs-free, repeat-search, hourly heatmap, guest-vs-auth) below.
-> *Placeholder: capture and save as `01-content-gap-report.png` in this chapter folder, then replace this block with `![Content-gap HTML report](01-content-gap-report.png)`.*
+The Lambda no longer renders its own HTML report — the five content-gap reports are now sections on the **centralized CloudFront dashboard** (see [§5.6.3](../5.6-verify/#563-the-dashboard)). The Content-Gap Lambda's job is to keep the five CSVs fresh; those back `GET /content-gaps` on the HTTP API. Its SNS notification now links to the CloudFront dashboard.
 
 ---
 

@@ -113,13 +113,13 @@ The full output is ~80 lines. Use it whenever you want a quick eyeball check on 
 
 ## 5.6.3 The dashboard
 
-Two paths to view the dashboard.
+The CloudFront dashboard is the **single stakeholder-facing presentation surface** — it contains every insight the pipeline produces. The `sdlf-pipeline-ott-dashboard` stack hosts it on a private S3 bucket fronted by CloudFront (Origin Access Control). The Trending Lambda regenerates `index.html` into that bucket on **every pipeline run** (`write_dashboard`), running its nine section queries concurrently against Athena.
 
-### Path A: the hosted search-analytics dashboard
+Every figure is **population-true** — sourced from the unfiltered `fpt_ott_searchevents_analytics.curated` table (~1.24 M search events). Sections rendered:
 
-The dashboard is **deployed**, not a local file. The `sdlf-pipeline-ott-dashboard` stack hosts it on a private S3 bucket fronted by CloudFront (Origin Access Control). The Trending Lambda regenerates `index.html` into that bucket on **every pipeline run** (`write_dashboard`), so the hosted page is never more than one run stale.
-
-Every figure is **population-true** — sourced from the unfiltered `fpt_ott_searchevents_analytics.curated` table (~1.24 M search events), not the volume-thresholded gold table. The gold `keyword_trends` table keeps its own job: the trending-ranking product behind `GET /trending`.
+- **KPIs** — total searches, distinct keywords, overall abandon rate, top genre
+- **Volume** — searches by platform (bar), genre distribution (donut + table), top-20 keywords (table), platform abandon rates (horizontal bar)
+- **Business questions** — trending keywords (7-day), content gaps (top-abandoned titles), premium vs free demand, repeat search rate, guest vs authenticated, search volume by hour-of-day
 
 Open the live dashboard (URL is published to SSM by the stack):
 
@@ -130,7 +130,7 @@ Write-Host "Dashboard: $URL"
 Start-Process $URL
 ```
 
-To save a local copy for offline viewing — `regenerate_dashboard.py` now just downloads the live page (it no longer queries Athena or bakes numbers):
+To save a local copy for offline viewing — `regenerate_dashboard.py` downloads the live page (it no longer queries Athena or bakes numbers):
 
 ```powershell
 python D:\ott-sdlf\scripts\regenerate_dashboard.py
@@ -143,26 +143,10 @@ Live dashboard: https://<id>.cloudfront.net
 Saved local copy -> D:\ott-sdlf\dashboard\index.html  (NN,NNN bytes)
 ```
 
-The dashboard shows four KPIs (total searches, distinct keywords, overall abandon rate, top genre), a platform bar chart, a genre donut + table, a top-20 keyword table, and a platform-abandon horizontal bar.
-
-> 📷 **Screenshot —** the dashboard open in a browser at its CloudFront URL: KPI tiles, platform bar chart, genre donut, and the top-20 keyword table.
+> 📷 **Screenshot —** the dashboard open in a browser at its CloudFront URL: KPI tiles, platform/genre charts, top-20 keyword table, then the business-question sections (trending, content gaps, premium-vs-free, repeat-search, guest-vs-auth, hourly volume).
 > *Placeholder: capture and save as `01-dashboard.png` in this chapter folder, then replace this block with `![Search-analytics dashboard](01-dashboard.png)`.*
 
-### Path B: the daily content-gap HTML report (Lambda-generated)
-
-The Content-Gap Lambda writes an HTML report with all 5 report tables embedded, every time it runs. Stored in the stage bucket; accessed via 7-day presigned URL.
-
-```powershell
-$STAGE = aws ssm get-parameter --name /sdlf/storage/rStageBucket/prod --query Parameter.Value --output text
-$LATEST = aws s3 ls "s3://$STAGE/analytics/content-gap/report/" --region ap-southeast-1 |
-  ForEach-Object { ($_ -split ' ')[-1] } | Sort-Object | Select-Object -Last 1
-$KEY = "analytics/content-gap/report/$LATEST" + "report.html"
-
-# Generate a presigned URL with KMS support (SigV4 is required for SSE-KMS)
-python -c "import boto3; from botocore.config import Config; s3 = boto3.client('s3', region_name='ap-southeast-1', config=Config(signature_version='s3v4')); print(s3.generate_presigned_url('get_object', Params={'Bucket': '$STAGE', 'Key': '$KEY'}, ExpiresIn=300))"
-```
-
-Open the URL in a browser. **Expected**: the same content as the SNS-emailed presigned URL — KPIs, 5 report tables, dark-mode styled.
+The Content-Gap Lambda no longer renders its own HTML report — those five reports are now sections on the centralized dashboard. The Lambda still writes the five CSVs that back the HTTP API; its SNS notification links to the CloudFront URL.
 
 ---
 
