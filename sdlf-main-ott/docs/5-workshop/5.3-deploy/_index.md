@@ -31,7 +31,7 @@ Eleven CloudFormation stacks, in dependency order:
 5.  sdlf-pipeline-ott-lutrefresh     — LUT-Refresh Lambda + DLQ + EventBridge rule
 6.  sdlf-pipeline-ott-contentgap     — Content-Gap Lambda + 5 catalog tables + DLQ
 7.  sdlf-pipeline-ott-trending       — Trending Lambda + trending_all/unknown catalog + DLQ
-8.  sdlf-pipeline-ott-monitoring     — CloudWatch dashboard + 17 alarms
+8.  sdlf-pipeline-ott-monitoring     — CloudWatch dashboard + 16 alarms
 9.  sdlf-pipeline-ott-lakeformation  — Column-level RBAC on curated
 10. sdlf-pipeline-ott-api            — HTTP API (x-api-key, freshness headers, arm64)
 11. sdlf-pipeline-ott-dashboard      — S3 + CloudFront hosting for the search-analytics dashboard
@@ -179,7 +179,7 @@ python D:\ott-sdlf\scripts\verify_monitoring_and_lf.py
 
 ## 5.3.6 Subscribe to the alarm SNS topic
 
-The 17 CloudWatch alarms deployed by `pipeline-ott-monitoring.yaml` publish to the SNS topic at `/SDLF/SNS/ott/Notifications`. The topic exists, but a fresh deployment has **0 subscribers** — alarms will fire silently. Add an endpoint:
+The 16 CloudWatch alarms deployed by `pipeline-ott-monitoring.yaml` publish to the SNS topic at `/SDLF/SNS/ott/Notifications`. The topic exists, but a fresh deployment has **0 subscribers** — alarms will fire silently. Add an endpoint:
 
 ```powershell
 $TOPIC = aws ssm get-parameter --name /SDLF/SNS/ott/Notifications --region ap-southeast-1 --query Parameter.Value --output text

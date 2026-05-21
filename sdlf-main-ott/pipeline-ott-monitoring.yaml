@@ -400,24 +400,12 @@ Resources:
       AlarmActions:
         - !Ref pSnsTopicArn
 
-  rAlarmLutRefreshDuration:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmName: sdlf-ott-mainLUT-refresh-near-timeout
-      AlarmDescription: LUT Refresh Lambda p90 duration exceeded 720s (80% of 900s limit)
-      Namespace: AWS/Lambda
-      MetricName: Duration
-      Dimensions:
-        - Name: FunctionName
-          Value: !Ref pLutLambdaName
-      ExtendedStatistic: p90
-      Period: 86400
-      EvaluationPeriods: 1
-      Threshold: 720000
-      ComparisonOperator: GreaterThanThreshold
-      TreatMissingData: notBreaching
-      AlarmActions:
-        - !Ref pSnsTopicArn
+  # LUT-Refresh is designed to use its full 900s budget — it processes
+  # keywords until the 120s timeout buffer hits. A p90 duration alarm here
+  # would fire on every healthy run, so the meaningful signals are kept
+  # elsewhere: rAlarmLutRefreshErrors (uncaught exceptions), the
+  # mainLUT-dlq-not-empty alarm (async failures land in the DLQ), and
+  # Lambda's built-in Timeouts metric (distinct from Duration).
 
   rAlarmContentGapErrors:
     Type: AWS::CloudWatch::Alarm

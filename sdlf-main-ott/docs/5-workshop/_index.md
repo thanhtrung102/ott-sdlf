@@ -22,7 +22,7 @@ A production-grade serverless data lake that turns raw OTT search-event Parquet 
 - five daily analytics reports (content gap, premium-vs-free, repeat-search, hourly heatmap, guest-vs-auth) + trending,
 - a centralized stakeholder dashboard on CloudFront (KPIs + volume + the five business reports + trending),
 - a key-protected HTTP API exposing the same reports as JSON,
-- and 17 CloudWatch alarms covering every failure mode.
+- and 16 CloudWatch alarms covering every failure mode.
 
 The reference dataset is **14 days of June 2022 FPT Play search events (~1.3 M events/day)**. The pipeline is region-locked to **`ap-southeast-1` (Singapore)**.
 
@@ -53,7 +53,7 @@ For the full 14-day reference dataset, end-to-end:
 | Athena (scanned data) | ~5 reports × 1 GB scan | ~$0.025 |
 | Lambda (4 functions × ~3 min total invocations) | Per run | <$0.01 |
 | S3 (raw + stage + analytics, ~5 GB total) | Storage | ~$0.12/month |
-| CloudWatch (logs + dashboard + 17 alarms) | Standing | ~$1.00/month |
+| CloudWatch (logs + dashboard + 16 alarms) | Standing | ~$1.00/month |
 | Bedrock (Claude Haiku, LUT-refresh) | Per refresh, ~10 k tokens | ~$0.05 |
 | **Total per full run** | | **<$3** |
 
