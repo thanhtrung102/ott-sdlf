@@ -296,10 +296,15 @@ def run() -> None:
     )
 
     # ── Step 10: Genre classification ────────────────────────────────────────
+    # A null keyword_norm means the search event carried no query text at all —
+    # that is an empty query, not an unclassified one. Bucket it as EMPTY_QUERY
+    # so the UNKNOWN bucket holds only keywords that *could* be classified but
+    # are not yet in the LUT. (The classifier UDF already returns EMPTY_QUERY
+    # for empty-string keywords; this aligns the null case with it.)
     df = df.withColumn(
         "derived_genre",
         when(col("keyword_norm").isNotNull(), classify_keyword_udf(col("keyword_norm")))
-        .otherwise(lit("UNKNOWN")),
+        .otherwise(lit("EMPTY_QUERY")),
     )
 
     # ── Steps 11-13 ──────────────────────────────────────────────────────────

@@ -6,7 +6,7 @@ Asserts the end-user-facing contracts that L4/L5/L6 broke in the past:
   2. content_gaps top row is a real keyword (non-empty keyword_norm)
   3. premium_vs_free top row has populated derived_genre + numeric premium_share_pct
   4. trending top row is NOT EMPTY_QUERY (regression test for N1)
-  5. CG Lambda's report_url returns HTTP 200 and <html (regression test for L5 SigV4)
+  5. CloudFront dashboard URL serves HTTP 200 + every section (centralized presentation)
   6. Athena ad-hoc query on curated WHERE derived_genre = 'X' returns rows
      (regression test for L3 partition key drift)
 
@@ -139,33 +139,27 @@ if tr:
     )
 
 print()
-print("=== Contract: Dashboard HTML artifact + presigned URL ===")
-# Don't sync-invoke CG (15-30s queries × 5 + SNS publish). Instead check the
-# most-recent dashboard artifact and verify a freshly-signed URL serves HTML.
-STAGE = "fpt-ott-ap-southeast-1-703668403514-stage-prod"
-s3 = boto3.client("s3", region_name=REGION, config=Config(signature_version="s3v4"))
-listing = s3.list_objects_v2(Bucket=STAGE, Prefix="analytics/content-gap/report/", Delimiter="/")
-date_prefixes = [p["Prefix"] for p in listing.get("CommonPrefixes", [])]
-latest_dt = sorted(date_prefixes)[-1] if date_prefixes else None
-check("CG dashboard date directory exists", bool(latest_dt), f"latest={latest_dt}")
-if latest_dt:
-    key = f"{latest_dt}report.html"
-    head_resp = s3.head_object(Bucket=STAGE, Key=key)
-    check(
-        "Dashboard report.html exists & non-trivial size",
-        head_resp["ContentLength"] > 1000,
-        f"size={head_resp['ContentLength']}",
-    )
-    presigned = s3.generate_presigned_url(
-        "get_object", Params={"Bucket": STAGE, "Key": key}, ExpiresIn=300
-    )
-    with urlopen(presigned, timeout=10) as r:
-        head = r.read(500).decode("utf-8", errors="replace")
-        check(
-            "Dashboard URL: HTTP 200 + <html (L5 SigV4 regression)",
-            r.status == 200 and "<html" in head.lower(),
-            f"status={r.status} starts='{head[:60]}'",
-        )
+print("=== Contract: Centralized CloudFront dashboard ===")
+# The Content-Gap Lambda no longer renders its own HTML report — the single
+# stakeholder-facing presentation surface is the CloudFront dashboard, written
+# by the Trending Lambda on every pipeline run. Resolve its URL from SSM and
+# verify the page is live, non-trivial, and contains every section.
+ssm = boto3.client("ssm", region_name=REGION)
+dash_url = ssm.get_parameter(Name="/sdlf/pipeline/rDashboardUrl/ott")["Parameter"]["Value"]
+check("Dashboard URL is published to SSM", dash_url.startswith("https://"), f"url={dash_url}")
+with urlopen(dash_url, timeout=10) as r:
+    body = r.read().decode("utf-8", errors="replace")
+check(
+    "Dashboard returns HTTP 200 + non-trivial HTML",
+    r.status == 200 and len(body) > 5000 and "<!DOCTYPE html" in body,
+    f"status={r.status} bytes={len(body)}",
+)
+for section in (
+    "Total Searches", "Distinct Keywords", "Top 20 Keywords",
+    "Trending Keywords", "Content Gaps", "Premium vs Free",
+    "Repeat Search Rate", "Guest vs Authenticated", "Search Volume by Hour",
+):
+    check(f"Dashboard section present: {section}", section in body)
 
 print()
 print("=== Contract: Athena catalog ===")

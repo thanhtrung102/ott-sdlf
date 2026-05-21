@@ -95,7 +95,10 @@ WITH agg AS (
         derived_genre,
         dt                                                                 AS trend_date,
         CAST(COUNT(*)                                           AS bigint) AS search_count,
-        CAST(SUM(CASE WHEN session_action = 'enter' THEN 1 ELSE 0 END)
+        -- session_action is 'SUBMIT' in current ETL output; older partitions
+        -- used the raw 'enter'. Match both so enter_count is correct across a
+        -- mixed-vintage curated table and after a full re-classification run.
+        CAST(SUM(CASE WHEN session_action IN ('SUBMIT', 'enter') THEN 1 ELSE 0 END)
                                                                 AS bigint) AS enter_count,
         CAST(SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END)
                                                                 AS bigint) AS abandoned_count,
@@ -350,12 +353,32 @@ def write_gold_table():
     return count
 
 
-def _render_dashboard_html(totals, platform, genre, keywords):
-    """Render the OTT search-analytics dashboard from curated-layer aggregates.
+_GENRE_COLOR = {
+    "PHIM_VIET": "#68d391", "ANIME": "#9f7aea", "PHIM_TRUNG": "#f6ad55",
+    "PHIM_HAN": "#76e4f7", "PHIM_AU_MY": "#fc8181", "TRUYEN_HINH": "#fbd38d",
+    "UNKNOWN": "#4a5568", "NHAC": "#b794f4", "THE_THAO": "#4299e1",
+    "EMPTY_QUERY": "#718096",
+}
 
-    Every figure is population-true — sourced from the unfiltered curated
-    table, not the volume-thresholded gold table. Gold (keyword_trends) keeps
-    its own job: the trending-ranking product behind GET /trending.
+
+def _esc(s):
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _genre_pill(g):
+    c = _GENRE_COLOR.get(g, "#718096")
+    return (f'<span class="genre-pill" style="background:{c}22;color:{c};'
+            f'border:1px solid {c}44">{_esc(g)}</span>')
+
+
+def _render_dashboard_html(totals, platform, genre, keywords, trending,
+                           content_gaps, premium, repeat_kw, guest, hourly):
+    """Render the centralized OTT search-analytics dashboard from curated.
+
+    One stakeholder-facing page. Every figure is population-true — sourced
+    from the unfiltered curated table. Sections: volume/genre/platform KPIs,
+    plus the five content-gap business reports and trending. The gold
+    keyword_trends table is a separate ranking product behind GET /trending.
     """
     total_searches  = int(totals.get("total", 0) or 0)
     distinct_kw     = int(totals.get("kw", 0) or 0)
@@ -383,6 +406,66 @@ def _render_dashboard_html(totals, platform, genre, keywords):
         if n >= 1_000:
             return f"{n / 1_000:.0f}K"
         return str(n)
+
+    def _int(r, k):
+        try:
+            return int(float(r.get(k, 0) or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    # ---- business-question sections, rendered server-side ----
+    trending_rows_html = ""
+    for i, r in enumerate(trending):
+        gm = r.get("growth_multiplier") or ""
+        is_new = str(r.get("is_new_keyword", "")).lower() == "true"
+        growth = (f"{gm}&times;" if gm
+                  else ("<span style='color:#68d391'>new</span>" if is_new else "&mdash;"))
+        kw = _esc(r.get("keyword_norm", ""))
+        trending_rows_html += (
+            f'<tr><td class="rank">{i + 1}</td>'
+            f'<td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;'
+            f'white-space:nowrap" title="{kw}">{kw}</td>'
+            f'<td>{_genre_pill(r.get("derived_genre", ""))}</td>'
+            f'<td>{_int(r, "current_cnt"):,}</td><td>{growth}</td></tr>'
+        )
+    trending_rows_html = trending_rows_html or '<tr><td colspan="5">No data</td></tr>'
+
+    cg_rows_html = ""
+    for i, r in enumerate(content_gaps):
+        kw = _esc(r.get("keyword_norm", ""))
+        cg_rows_html += (
+            f'<tr><td class="rank">{i + 1}</td>'
+            f'<td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;'
+            f'white-space:nowrap" title="{kw}">{kw}</td>'
+            f'<td>{_genre_pill(r.get("derived_genre", ""))}</td>'
+            f'<td>{_int(r, "searches"):,}</td><td>{_int(r, "abandoned"):,}</td>'
+            f'<td style="color:#fc8181">{r.get("abandon_rate_pct", "")}%</td></tr>'
+        )
+    cg_rows_html = cg_rows_html or '<tr><td colspan="6">No data</td></tr>'
+
+    def _share_rows(rows, pct_key, cnt_key, color):
+        html_rows = ""
+        for r in rows:
+            try:
+                pct = float(r.get(pct_key, 0) or 0)
+            except (TypeError, ValueError):
+                pct = 0.0
+            html_rows += (
+                f'<tr><td>{_genre_pill(r.get("derived_genre", ""))}</td>'
+                f'<td>{_int(r, "total_searches"):,}</td>'
+                f'<td>{_int(r, cnt_key):,}</td><td>{pct}%</td>'
+                f'<td class="bar-cell"><div class="mini-bar"><div class="mini-bar-fill" '
+                f'style="width:{min(pct, 100)}%;background:{color}"></div></div></td></tr>'
+            )
+        return html_rows or '<tr><td colspan="5">No data</td></tr>'
+
+    premium_rows_html = _share_rows(premium, "premium_share_pct", "premium_searches", "#f6ad55")
+    repeat_rows_html  = _share_rows(repeat_kw, "repeat_pct", "repeat_searches", "#fc8181")
+    guest_rows_html   = _share_rows(guest, "guest_share_pct", "guest_searches", "#4299e1")
+    hours_json = json.dumps([
+        {"h": int(r["hour_of_day_vn"]), "c": int(r["c"])}
+        for r in hourly if str(r.get("hour_of_day_vn", "")).strip() != ""
+    ])
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -490,6 +573,64 @@ def _render_dashboard_html(totals, platform, genre, keywords):
     <h2>Platform Abandon Rates</h2>
     <div class="src">fpt_ott_searchevents_analytics.curated &mdash; abandon_rate by platform</div>
     <div class="chart-wrap" style="height:280px"><canvas id="abandonChart"></canvas></div>
+  </div>
+</div>
+
+<div style="font-size:13px;color:#718096;text-transform:uppercase;letter-spacing:.05em;margin:8px 0 14px;font-weight:600">
+  Business Questions &mdash; stakeholder reports
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <h2>Trending Keywords &mdash; Last 7 Days</h2>
+    <div class="src">fpt_ott_searchevents_analytics.curated &mdash; 7-day window vs 4-week baseline</div>
+    <table>
+      <thead><tr><th class="rank">#</th><th>Keyword</th><th>Genre</th><th>Searches</th><th>Growth</th></tr></thead>
+      <tbody>{trending_rows_html}</tbody>
+    </table>
+  </div>
+  <div class="card">
+    <h2>Content Gaps &mdash; Top Abandoned Titles</h2>
+    <div class="src">curated &mdash; abandon rate by keyword, HAVING abandoned &ge; 5</div>
+    <table>
+      <thead><tr><th class="rank">#</th><th>Keyword</th><th>Genre</th><th>Searches</th><th>Abandoned</th><th>Abandon%</th></tr></thead>
+      <tbody>{cg_rows_html}</tbody>
+    </table>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <h2>Premium vs Free Demand by Genre</h2>
+    <div class="src">curated &mdash; has_premium share per genre</div>
+    <table>
+      <thead><tr><th>Genre</th><th>Searches</th><th>Premium</th><th>Premium%</th><th class="bar-cell"></th></tr></thead>
+      <tbody>{premium_rows_html}</tbody>
+    </table>
+  </div>
+  <div class="card">
+    <h2>Repeat Search Rate by Genre</h2>
+    <div class="src">curated &mdash; is_repeat_search share per genre</div>
+    <table>
+      <thead><tr><th>Genre</th><th>Searches</th><th>Repeat</th><th>Repeat%</th><th class="bar-cell"></th></tr></thead>
+      <tbody>{repeat_rows_html}</tbody>
+    </table>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <h2>Guest vs Authenticated Demand by Genre</h2>
+    <div class="src">curated &mdash; guest (unauthenticated) share per genre</div>
+    <table>
+      <thead><tr><th>Genre</th><th>Searches</th><th>Guest</th><th>Guest%</th><th class="bar-cell"></th></tr></thead>
+      <tbody>{guest_rows_html}</tbody>
+    </table>
+  </div>
+  <div class="card">
+    <h2>Search Volume by Hour (Vietnam Time)</h2>
+    <div class="src">curated &mdash; COUNT(*) by hour_of_day_vn</div>
+    <div class="chart-wrap"><canvas id="hourlyChart"></canvas></div>
   </div>
 </div>
 
@@ -608,47 +749,134 @@ topKeywords.forEach((kw, i) => {{
     <td class="bar-cell"><div class="mini-bar"><div class="mini-bar-fill" style="width:${{barW}}%;background:${{barColor}}"></div></div></td>`;
   kwTableEl.appendChild(tr);
 }});
+
+const hourly = {hours_json};
+new Chart(document.getElementById('hourlyChart'), {{
+  type: 'bar',
+  data: {{
+    labels: hourly.map(h => h.h + 'h'),
+    datasets: [{{
+      label: 'Searches', data: hourly.map(h => h.c),
+      backgroundColor: '#4299e1', borderRadius: 3,
+    }}]
+  }},
+  options: {{
+    responsive: true, maintainAspectRatio: false,
+    plugins: {{ legend: {{ display: false }} }},
+    scales: {{
+      x: {{ grid: {{ display: false }} }},
+      y: {{ grid: {{ color: '#2d3748' }}, title: {{ display: true, text: 'Search Count' }} }},
+    }}
+  }}
+}});
 </script>
 </body>
 </html>
 """
 
 
-def write_dashboard():
-    """Render the search-analytics dashboard from curated and publish to S3.
+_ABANDON_EXPR = ("ROUND(100.0 * SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END)"
+                 " / COUNT(*), 1)")
 
-    Sourced entirely from the unfiltered curated table so every figure is
-    population-true. The dashboard bucket is fronted by CloudFront
-    (sdlf-pipeline-ott-dashboard); writing index.html here refreshes the live
-    dashboard on every pipeline run.
+
+def _dashboard_sql():
+    """Every dashboard section's query, keyed by section. Run concurrently."""
+    ab = _ABANDON_EXPR
+    return {
+        "totals": (f"SELECT COUNT(*) AS total, COUNT(DISTINCT keyword_norm) AS kw, "
+                   f"{ab} AS abandon, MAX(dt) AS max_dt FROM {DB}.curated"),
+        "platform": (f"SELECT platform_group, COUNT(*) AS c, {ab} AS a "
+                     f"FROM {DB}.curated GROUP BY platform_group ORDER BY c DESC"),
+        "genre": (f"SELECT derived_genre, COUNT(*) AS c, {ab} AS a "
+                  f"FROM {DB}.curated GROUP BY derived_genre ORDER BY c DESC"),
+        "keywords": (f"SELECT keyword_norm, derived_genre, COUNT(*) AS c, {ab} AS a "
+                     f"FROM {DB}.curated WHERE keyword_norm IS NOT NULL AND keyword_norm != '' "
+                     f"GROUP BY keyword_norm, derived_genre ORDER BY c DESC LIMIT 20"),
+        "content_gaps": (
+            f"SELECT keyword_norm, derived_genre, COUNT(*) AS searches, "
+            f"SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END) AS abandoned, "
+            f"{ab} AS abandon_rate_pct FROM {DB}.curated "
+            f"WHERE derived_genre NOT IN ('UNKNOWN', 'EMPTY_QUERY') "
+            f"AND keyword_norm IS NOT NULL AND keyword_norm != '' "
+            f"GROUP BY keyword_norm, derived_genre "
+            f"HAVING SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END) >= 5 "
+            f"ORDER BY abandon_rate_pct DESC, abandoned DESC LIMIT 15"),
+        "premium": (
+            f"SELECT derived_genre, COUNT(*) AS total_searches, "
+            f"SUM(CASE WHEN has_premium THEN 1 ELSE 0 END) AS premium_searches, "
+            f"ROUND(100.0 * SUM(CASE WHEN has_premium THEN 1 ELSE 0 END) "
+            f"/ CAST(COUNT(*) AS double), 1) AS premium_share_pct "
+            f"FROM {DB}.curated GROUP BY derived_genre ORDER BY premium_share_pct DESC"),
+        "repeat": (
+            f"SELECT derived_genre, COUNT(*) AS total_searches, "
+            f"SUM(CASE WHEN is_repeat_search THEN 1 ELSE 0 END) AS repeat_searches, "
+            f"ROUND(100.0 * SUM(CASE WHEN is_repeat_search THEN 1 ELSE 0 END) "
+            f"/ CAST(COUNT(*) AS double), 1) AS repeat_pct "
+            f"FROM {DB}.curated GROUP BY derived_genre ORDER BY repeat_pct DESC"),
+        "guest": (
+            f"SELECT derived_genre, COUNT(*) AS total_searches, "
+            f"SUM(CASE WHEN NOT user_is_authenticated THEN 1 ELSE 0 END) AS guest_searches, "
+            f"ROUND(100.0 * SUM(CASE WHEN NOT user_is_authenticated THEN 1 ELSE 0 END) "
+            f"/ CAST(COUNT(*) AS double), 1) AS guest_share_pct "
+            f"FROM {DB}.curated WHERE derived_genre NOT IN ('UNKNOWN', 'EMPTY_QUERY') "
+            f"GROUP BY derived_genre ORDER BY guest_share_pct DESC"),
+        "hourly": (f"SELECT hour_of_day_vn, COUNT(*) AS c FROM {DB}.curated "
+                   f"WHERE hour_of_day_vn IS NOT NULL "
+                   f"GROUP BY hour_of_day_vn ORDER BY hour_of_day_vn"),
+    }
+
+
+def _collect_query(qid):
+    """Block until an already-started Athena query finishes; return list of dict rows."""
+    while True:
+        st = athena.get_query_execution(QueryExecutionId=qid)["QueryExecution"]["Status"]["State"]
+        if st == "SUCCEEDED":
+            break
+        if st in ("FAILED", "CANCELLED"):
+            raise RuntimeError(f"Athena query {st}: {qid}")
+        time.sleep(2)
+    headers, rows = None, []
+    for page in athena.get_paginator("get_query_results").paginate(QueryExecutionId=qid):
+        for row in page["ResultSet"]["Rows"]:
+            values = [col.get("VarCharValue", "") for col in row["Data"]]
+            if headers is None:
+                headers = values
+                continue
+            rows.append(dict(zip(headers, values)))
+    return rows
+
+
+def write_dashboard(trending_rows):
+    """Render the centralized search-analytics dashboard and publish to S3.
+
+    All sections are sourced from the unfiltered curated table so every figure
+    is population-true. The dashboard bucket is fronted by CloudFront
+    (sdlf-pipeline-ott-dashboard); index.html is rewritten on every pipeline
+    run. The nine section queries are launched concurrently — wall-clock time
+    is the slowest query, not their sum, keeping this well under the timeout.
     """
     bucket = os.environ.get("DASHBOARD_BUCKET", "")
     if not bucket:
         logger.warning("DASHBOARD_BUCKET not set — skipping dashboard write")
         return 0
 
-    abandon_expr = ("ROUND(100.0 * SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END)"
-                    " / COUNT(*), 1)")
+    qids = {
+        name: athena.start_query_execution(
+            QueryString=sql,
+            QueryExecutionContext={"Database": DB},
+            ResultConfiguration={"OutputLocation": RESULTS},
+            WorkGroup=WORKGROUP,
+        )["QueryExecutionId"]
+        for name, sql in _dashboard_sql().items()
+    }
+    data = {name: _collect_query(qid) for name, qid in qids.items()}
 
-    _, totals = athena_query(
-        f"SELECT COUNT(*) AS total, COUNT(DISTINCT keyword_norm) AS kw, "
-        f"{abandon_expr} AS abandon, MAX(dt) AS max_dt FROM {DB}.curated"
+    html = _render_dashboard_html(
+        data["totals"][0] if data["totals"] else {},
+        data["platform"], data["genre"], data["keywords"],
+        trending_rows[:15], data["content_gaps"], data["premium"],
+        data["repeat"], data["guest"], data["hourly"],
     )
-    _, platform = athena_query(
-        f"SELECT platform_group, COUNT(*) AS c, {abandon_expr} AS a "
-        f"FROM {DB}.curated GROUP BY platform_group ORDER BY c DESC"
-    )
-    _, genre = athena_query(
-        f"SELECT derived_genre, COUNT(*) AS c, {abandon_expr} AS a "
-        f"FROM {DB}.curated GROUP BY derived_genre ORDER BY c DESC"
-    )
-    _, keywords = athena_query(
-        f"SELECT keyword_norm, derived_genre, COUNT(*) AS c, {abandon_expr} AS a "
-        f"FROM {DB}.curated WHERE keyword_norm IS NOT NULL AND keyword_norm != '' "
-        f"GROUP BY keyword_norm, derived_genre ORDER BY c DESC LIMIT 20"
-    )
-
-    html = _render_dashboard_html(totals[0] if totals else {}, platform, genre, keywords)
     s3.put_object(
         Bucket=bucket,
         Key="index.html",
@@ -683,6 +911,7 @@ def lambda_handler(event, context):
         logger.info(f"Baseline window {base_start} to {base_end} has data — running growth query")
 
     summary, errors = {}, 0
+    trending_rows = []
 
     for name, genre_filter in [
         ("trending_all",     ""),
@@ -693,6 +922,8 @@ def lambda_handler(event, context):
             headers, rows = run_trending_query(
                 cur_start, cur_end, base_start, base_end, use_fallback, genre_filter,
             )
+            if name == "trending_all":
+                trending_rows = rows
             report_prefix = f"{ANALYTICS_PREFIX}{_SUBDIR[name]}/{dt}/"
             summary[name] = write_csv(f"{report_prefix}{name}.csv", headers, rows)
         except Exception as e:
@@ -708,7 +939,7 @@ def lambda_handler(event, context):
         errors += 1
 
     try:
-        summary["dashboard_bytes"] = write_dashboard()
+        summary["dashboard_bytes"] = write_dashboard(trending_rows)
     except Exception as e:
         logger.error(f"Dashboard write failed: {e}")
         summary["dashboard_bytes"] = -1

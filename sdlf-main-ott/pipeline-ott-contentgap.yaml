@@ -22,6 +22,10 @@ Parameters:
   pSnsTopicArn:
     Type: AWS::SSM::Parameter::Value<String>
     Default: /SDLF/SNS/ott/Notifications
+  pDashboardUrl:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/pipeline/rDashboardUrl/ott
+    Description: CloudFront URL of the centralized dashboard; the SNS notification links here instead of a per-run presigned HTML report.
   pKmsKeyArn:
     Type: AWS::SSM::Parameter::Value<String>
     Default: /sdlf/storage/rKMSKey/prod
@@ -176,7 +180,7 @@ Resources:
           STAGE_BUCKET: !Ref pStageBucket
           ANALYTICS_PREFIX: analytics/content-gap/
           SNS_TOPIC_ARN: !Ref pSnsTopicArn
-          REPORT_PRESIGN_TTL_SECONDS: "604800"
+          DASHBOARD_URL: !Ref pDashboardUrl
           ATHENA_WORKGROUP: sdlf-ott
           TEAM: ott
           PIPELINE: main

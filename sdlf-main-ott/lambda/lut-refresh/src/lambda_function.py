@@ -43,6 +43,24 @@ ALIAS = {
 _CLEAN = re.compile(r"[\x00-\x1f\x7f\\]")
 _CODE  = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 
+# Keywords Bedrock structurally cannot classify — single/two-char type-ahead
+# fragments, empty strings, and voice-search UI artifacts. They only ever come
+# back UNKNOWN, so they are filtered before the Bedrock call and recorded as
+# resolved (see is_classifiable + the resolved set) instead of being re-sent
+# on every run.
+_META_QUERIES = frozenset({
+    "tìm kiếm bằng giọng nói",  # Vietnamese for "search by voice"
+})
+
+
+def is_classifiable(kw):
+    if not kw:
+        return False
+    s = kw.strip()
+    if len(s) <= 2:
+        return False
+    return s not in _META_QUERIES
+
 SYS = (
     "You are a genre classifier for FPT Play, a Vietnamese OTT platform.\n"
     "Genre codes: PHIM_TRUNG PHIM_VIET PHIM_HAN PHIM_AU_MY ANIME THE_THAO NHAC TRUYEN_HINH UNKNOWN\n"
@@ -95,29 +113,51 @@ def athena_query(sql):
     return rows
 
 
+_LUT_FILE      = "genre_classifier/lut_extended.json"
+_RESOLVED_FILE = "genre_classifier/resolved.json"
+
+
 def load_lut():
+    """Return (lut, resolved). resolved = keywords already attempted and
+    confirmed unclassifiable — skipped on subsequent runs so each run makes
+    forward progress instead of re-attempting the same noise."""
     data = s3.get_object(Bucket=ART_BUCKET, Key=ART_KEY)["Body"].read()
     with zipfile.ZipFile(io.BytesIO(data)) as z:
-        return json.loads(z.read("genre_classifier/lut_extended.json").decode("utf-8"))
+        names = set(z.namelist())
+        lut = json.loads(z.read(_LUT_FILE).decode("utf-8"))
+        resolved = set()
+        if _RESOLVED_FILE in names:
+            resolved = set(json.loads(z.read(_RESOLVED_FILE).decode("utf-8")))
+    return lut, resolved
 
 
-def save_lut(lut):
+def save_lut(lut, resolved):
     existing = s3.get_object(Bucket=ART_BUCKET, Key=ART_KEY)["Body"].read()
-    lut_bytes = json.dumps(lut, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8")
+    managed = {
+        _LUT_FILE: json.dumps(lut, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8"),
+        _RESOLVED_FILE: json.dumps(sorted(resolved), ensure_ascii=False).encode("utf-8"),
+    }
     buf = io.BytesIO()
     with zipfile.ZipFile(io.BytesIO(existing)) as zin:
+        existing_names = set(zin.namelist())
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zout:
             for info in zin.infolist():
-                if info.filename == "genre_classifier/lut_extended.json":
-                    zout.writestr(info, lut_bytes)
+                if info.filename in managed:
+                    zout.writestr(info, managed[info.filename])
                 else:
                     zout.writestr(info, zin.read(info.filename))
+            for name, payload in managed.items():
+                if name not in existing_names:
+                    zout.writestr(name, payload)
     zip_bytes = buf.getvalue()
     s3.put_object(
         Bucket=ART_BUCKET, Key=ART_KEY,
         Body=zip_bytes, ContentType="application/zip",
     )
-    logger.info(f"Zip rebuilt: {len(lut)} LUT entries -> s3://{ART_BUCKET}/{ART_KEY}")
+    logger.info(
+        f"Zip rebuilt: {len(lut)} LUT entries, {len(resolved)} resolved-unknown "
+        f"-> s3://{ART_BUCKET}/{ART_KEY}"
+    )
     # Mirror to the project bucket the Glue ETL actually reads
     # --extra-py-files from. Without this the refreshed classifier is a
     # dead artifact and curated keeps using the stale LUT.
@@ -146,17 +186,20 @@ def classify_batch(batch):
                 modelId=MODEL_ID,
                 system=[{"text": SYS}],
                 messages=[{"role": "user", "content": [{"text": TPL.format(kws="\n".join(san))}]}],
-                inferenceConfig={"maxTokens": 4096, "temperature": 0},
+                inferenceConfig={"maxTokens": 8192, "temperature": 0},
             )
             raw = resp["output"]["message"]["content"][0]["text"]
             parsed = json.loads(_CODE.sub("", raw.strip()))
             if parsed and sum(1 for k in parsed if k.upper() in VALID) / len(parsed) > 0.5:
                 parsed = {v: k for k, v in parsed.items() if isinstance(v, str)}
-            return {
+            result = {
                 san.get(k, k): normalize(v)
                 for k, v in parsed.items()
                 if san.get(k, k) in batch and normalize(v) != "UNKNOWN"
             }
+            # errored=False: the call + parse succeeded. An empty result is a
+            # valid outcome (all keywords genuinely UNKNOWN) — NOT an error.
+            return result, False
         except Exception as e:
             err = str(e)
             if "ThrottlingException" in err or "TooManyRequests" in err or "throttl" in err.lower():
@@ -165,9 +208,9 @@ def classify_batch(batch):
                 time.sleep(wait)
                 continue
             logger.warning(f"batch failed: {e}")
-            return {}
+            return {}, True
     logger.warning("batch failed after 4 throttle retries")
-    return {}
+    return {}, True
 
 
 def lambda_handler(event, context):
@@ -185,33 +228,58 @@ def lambda_handler(event, context):
     unknowns = athena_query(sql)
     logger.info(f"Athena: {len(unknowns)} UNKNOWN keyword_norm values in curated table")
 
-    lut = load_lut()
-    logger.info(f"Loaded {len(lut)} existing LUT entries from artifact zip")
+    lut, resolved = load_lut()
+    logger.info(f"Loaded {len(lut)} LUT entries, {len(resolved)} resolved-unknown markers")
 
-    new_kws = [k for k in unknowns if k not in lut][:MAX_KW]
-    logger.info(f"New keywords to classify: {len(new_kws)}")
+    # Skip keywords already classified (lut) or already attempted (resolved).
+    candidates = [k for k in unknowns if k not in lut and k not in resolved]
+    # Structurally unclassifiable keywords (single/2-char fragments, empty,
+    # voice-search artifacts) are recorded as resolved without a Bedrock call —
+    # they would only ever return UNKNOWN and otherwise burn the whole budget.
+    skipped = [k for k in candidates if not is_classifiable(k)]
+    resolved.update(skipped)
+    new_kws = [k for k in candidates if is_classifiable(k)][:MAX_KW]
+    logger.info(
+        f"Candidates: {len(candidates)} | skipped as unclassifiable: {len(skipped)} | "
+        f"to classify via Bedrock: {len(new_kws)}"
+    )
     if not new_kws:
-        logger.info("LUT is already up to date — no Bedrock calls needed")
-        return {"classified": 0, "lut_size": len(lut), "message": "up-to-date"}
+        if skipped:
+            save_lut(lut, resolved)
+        logger.info("No classifiable new keywords — LUT is up to date")
+        return {"classified": 0, "lut_size": len(lut),
+                "resolved": len(resolved), "message": "up-to-date"}
 
-    classified, errors = 0, 0
+    classified, errors, unresolved_total = 0, 0, 0
     for i in range(0, len(new_kws), BATCH_SZ):
         batch = new_kws[i: i + BATCH_SZ]
-        result = classify_batch(batch)
-        lut.update(result)
-        classified += len(result)
-        if not result:
+        result, errored = classify_batch(batch)
+        if errored:
             errors += 1
+        else:
+            lut.update(result)
+            classified += len(result)
+            # Keywords the model saw but did not classify are confirmed
+            # unclassifiable — mark resolved so they are never re-attempted.
+            unresolved = set(batch) - set(result)
+            resolved.update(unresolved)
+            unresolved_total += len(unresolved)
         if (i // BATCH_SZ) % 20 == 0:
-            logger.info(f"  [{i // BATCH_SZ + 1}] classified: {classified}, errors: {errors}")
+            logger.info(
+                f"  [{i // BATCH_SZ + 1}] classified: {classified}, "
+                f"unresolved: {unresolved_total}, batch errors: {errors}"
+            )
         time.sleep(THROTTLE)
         if context.get_remaining_time_in_millis() < 120_000:
             logger.info(f"  Timeout buffer — stopping at {i + len(batch)}/{len(new_kws)}")
             break
 
-    logger.info(f"Classification complete: {classified} new genres, {errors} batch errors")
+    logger.info(
+        f"Classification complete: {classified} new genres, "
+        f"{unresolved_total} confirmed-unclassifiable, {errors} batch errors"
+    )
 
-    lut_clean = {k: v for k, v in lut.items() if v != "UNKNOWN"}
-    save_lut(lut_clean)
+    save_lut(lut, resolved)
 
-    return {"classified": classified, "lut_size": len(lut_clean), "errors": errors}
+    return {"classified": classified, "lut_size": len(lut),
+            "resolved": len(resolved), "errors": errors}
