@@ -102,7 +102,10 @@ def verify_stacks() -> None:
     for name in OTT_STACKS:
         try:
             st = cfn.describe_stacks(StackName=name)["Stacks"][0]["StackStatus"]
-            ok = st in ("CREATE_COMPLETE", "UPDATE_COMPLETE")
+            # UPDATE_COMPLETE_CLEANUP_IN_PROGRESS is a healthy terminal state —
+            # the stack update succeeded and CFN is just removing replaced
+            # resources in the background. Treat it as PASS, not FAIL.
+            ok = st in ("CREATE_COMPLETE", "UPDATE_COMPLETE", "UPDATE_COMPLETE_CLEANUP_IN_PROGRESS")
             line("PASS" if ok else "FAIL", name, st)
         except cfn.exceptions.ClientError as e:
             line("FAIL", name, str(e.response["Error"]["Code"]))
