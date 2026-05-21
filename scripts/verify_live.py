@@ -1,13 +1,12 @@
 """Live infrastructure verification for the OTT SDLF pipeline.
 
 Walks every deployed functionality and asserts it against live AWS:
-CI/CD, CloudFormation stacks, the Glue ETL job, the Glue catalog, the four
+CI/CD, CloudFormation stacks, the Glue ETL job, the Glue catalog, the
 state machines, the analytics Lambdas, the DLQs, CloudWatch alarms + the
-dashboard, the HTTP API, and Lake Formation enforcement.
+dashboard, and Lake Formation enforcement.
 
 Reproducible on any machine: needs only AWS credentials for the target
-account (region ap-southeast-1) and `pip install boto3`. The API key is
-read from SSM, so no secret is passed on the command line.
+account (region ap-southeast-1) and `pip install boto3`.
 
   python scripts/verify_live.py
 
@@ -33,32 +32,24 @@ OTT_STACKS = [
     "sdlf-pipeline-ott-mainB",
     "sdlf-pipeline-ott-dataquality",
     "sdlf-pipeline-ott-lutrefresh",
-    "sdlf-pipeline-ott-contentgap",
     "sdlf-pipeline-ott-trending",
     "sdlf-pipeline-ott-monitoring",
     "sdlf-pipeline-ott-lakeformation",
-    "sdlf-pipeline-ott-api",
     "sdlf-pipeline-ott-dashboard",
 ]
 STATE_MACHINES = ["mainA", "mainB", "mainDQ"]
 ANALYTICS_LAMBDAS = [
     "sdlf-ott-mainTR-report",
-    "sdlf-ott-mainCG-report",
     "sdlf-ott-mainLUT-refresh",
-    "sdlf-ott-api",
 ]
 DLQS = [
     "sdlf-ott-mainA-dlq.fifo",
     "sdlf-ott-mainB-dlq.fifo",
-    "sdlf-ott-mainCG-dlq",
     "sdlf-ott-mainLUT-dlq",
     "sdlf-ott-mainTR-dlq",
 ]
 EXPECTED_ANALYTICS_TABLES = {
     "raw_search_events", "curated", "dq_results",
-    "content_gaps", "premium_vs_free", "repeat_search_rate",
-    "hour_of_day_heatmap", "guest_vs_auth_demand",
-    "trending_all", "trending_unknown",
 }
 
 counts = {"PASS": 0, "WARN": 0, "FAIL": 0}
@@ -94,7 +85,7 @@ def verify_cicd() -> None:
 
 
 def verify_stacks() -> None:
-    section("CloudFormation — 11 OTT stacks")
+    section("CloudFormation — 9 OTT stacks")
     cfn = boto3.client("cloudformation", region_name=REGION)
     for name in OTT_STACKS:
         try:
@@ -127,14 +118,24 @@ def verify_glue() -> None:
     tables = {t["Name"] for t in glue.get_paginator("get_tables")
               .paginate(DatabaseName=ANALYTICS_DB).build_full_result()["TableList"]}
     missing = EXPECTED_ANALYTICS_TABLES - tables
+    expected_count = len(EXPECTED_ANALYTICS_TABLES)
     line("PASS" if not missing else "FAIL",
-         f"{ANALYTICS_DB}: 10 expected tables",
-         f"{len(tables & EXPECTED_ANALYTICS_TABLES)}/10"
+         f"{ANALYTICS_DB}: {expected_count} expected tables",
+         f"{len(tables & EXPECTED_ANALYTICS_TABLES)}/{expected_count}"
          + (f", missing {sorted(missing)}" if missing else ""))
+    # Surface any stragglers from retired stacks (former content-gap +
+    # trending CSV tables) so the cleanup state is visible.
+    legacy = {"content_gaps", "premium_vs_free", "repeat_search_rate",
+              "hour_of_day_heatmap", "guest_vs_auth_demand",
+              "trending_all", "trending_unknown"}
+    leftover = sorted(tables & legacy)
+    if leftover:
+        line("WARN", "legacy CSV-backed tables still in catalog",
+             ", ".join(leftover))
 
 
 def verify_state_machines() -> None:
-    section("Step Functions — 4 state machines")
+    section("Step Functions — 3 state machines")
     sf = boto3.client("stepfunctions", region_name=REGION)
     for sm in STATE_MACHINES:
         arn = f"arn:aws:states:{REGION}:{ACCOUNT}:stateMachine:sdlf-ott-{sm}-sm"
@@ -153,7 +154,7 @@ def verify_state_machines() -> None:
 
 
 def verify_lambdas() -> None:
-    section("Lambda — analytics + API functions")
+    section("Lambda — analytics functions")
     lam = boto3.client("lambda", region_name=REGION)
     for fn in ANALYTICS_LAMBDAS:
         try:
@@ -164,7 +165,7 @@ def verify_lambdas() -> None:
 
 
 def verify_dlqs() -> None:
-    section("SQS — 5 dead-letter queues")
+    section("SQS — 4 dead-letter queues")
     sqs = boto3.client("sqs", region_name=REGION)
     for q in DLQS:
         url = f"https://sqs.{REGION}.amazonaws.com/{ACCOUNT}/{q}"
@@ -197,45 +198,37 @@ def verify_monitoring() -> None:
         line("PASS", "no alarms in ALARM state")
 
 
-def verify_api() -> None:
-    section("HTTP API — endpoints + auth + freshness")
+def verify_dashboard() -> None:
+    section("CloudFront dashboard — single user-facing surface")
     ssm = boto3.client("ssm", region_name=REGION)
-    api = ssm.get_parameter(Name="/sdlf/pipeline/rApiUrl/ott")["Parameter"]["Value"]
-    key = ssm.get_parameter(
-        Name="/sdlf/ott/api-key/prod", WithDecryption=True)["Parameter"]["Value"]
-
-    def call(path: str, with_key: bool):
-        req = Request(api.rstrip("/") + path)
-        if with_key:
-            req.add_header("x-api-key", key)
-        return urlopen(req, timeout=30)
-
     try:
-        resp = call("/trending?limit=3", with_key=True)
-        body = json.loads(resp.read())
-        fresh = resp.headers.get("X-Data-Freshness", "")
-        line("PASS" if resp.status == 200 and body else "FAIL",
-             "GET /trending (authorised)", f"HTTP {resp.status}, {len(body)} rows")
-        line("PASS" if fresh else "FAIL",
-             "X-Data-Freshness header present", fresh)
+        url = ssm.get_parameter(Name="/sdlf/pipeline/rDashboardUrl/ott")["Parameter"]["Value"]
+    except ssm.exceptions.ParameterNotFound:
+        line("FAIL", "Dashboard URL published to SSM", "param missing")
+        return
+    line("PASS" if url.startswith("https://") else "FAIL",
+         "Dashboard URL published to SSM", url)
+    try:
+        with urlopen(url, timeout=15) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+            ok = resp.status == 200 and len(body) > 8000 and "<!DOCTYPE html" in body
+            line("PASS" if ok else "FAIL",
+                 "Dashboard HTTP 200 + non-trivial HTML",
+                 f"status={resp.status} bytes={len(body)}")
     except (HTTPError, URLError) as e:
-        line("FAIL", "GET /trending (authorised)", str(e))
-
-    try:
-        call("/trending?limit=1", with_key=False)
-        line("FAIL", "GET /trending without key rejected", "expected 401")
-    except HTTPError as e:
-        line("PASS" if e.code == 401 else "FAIL",
-             "GET /trending without key rejected", f"HTTP {e.code}")
-
-    try:
-        resp = call("/content-gaps?report=premium_vs_free&limit=2", with_key=True)
-        body = json.loads(resp.read())
-        line("PASS" if resp.status == 200 and body else "FAIL",
-             "GET /content-gaps (authorised)",
-             f"HTTP {resp.status}, {len(body)} rows")
-    except (HTTPError, URLError) as e:
-        line("FAIL", "GET /content-gaps (authorised)", str(e))
+        line("FAIL", "Dashboard fetch", str(e))
+        return
+    # Source-attribution caption — every render should stamp the dt window.
+    line("PASS" if "Source: curated" in body else "FAIL",
+         "Header source-attribution stamp present")
+    for section_name in (
+        "Total Searches", "Distinct Keywords", "Top 20 Keywords",
+        "Trending Keywords", "Content Gaps", "Premium vs Free",
+        "Repeat Search Rate", "Guest vs Authenticated",
+        "Search Volume by Hour",
+    ):
+        line("PASS" if section_name in body else "FAIL",
+             f"Dashboard section present: {section_name}")
 
 
 def verify_lake_formation() -> None:
@@ -260,7 +253,7 @@ def main() -> int:
     print(f"OTT SDLF pipeline — live verification")
     print(f"account={ACCOUNT}  region={REGION}")
     for fn in (verify_cicd, verify_stacks, verify_glue, verify_state_machines,
-               verify_lambdas, verify_dlqs, verify_monitoring, verify_api,
+               verify_lambdas, verify_dlqs, verify_monitoring, verify_dashboard,
                verify_lake_formation):
         try:
             fn()

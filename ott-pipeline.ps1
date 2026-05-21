@@ -1,4 +1,4 @@
-# ott-pipeline.ps1 — OTT SDLF single end-to-end pipeline script
+﻿# ott-pipeline.ps1 — OTT SDLF single end-to-end pipeline script
 #
 # Handles: deploy → ingest trigger → Stage A/B/DQ wait → analytics Lambdas → summary
 #
@@ -234,49 +234,72 @@ if (-not $SkipDeploy -and -not $AnalyticsOnly) {
         "pProjectBucketKmsKeyArn=$ProjectKms"
     )
 
-    # 6–7. Content Gap and Trending Lambdas — triggered by DQ SUCCEEDED
-    Deploy-Stack "sdlf-pipeline-ott-contentgap" "$Tpl\pipeline-ott-contentgap.yaml" @(
-        "pAthenaResultsBucket=$AthenaBucket",
-        "pAthenaWorkgroupKmsKey=$KmsKey"
-    )
+    # 6. Dashboard renderer (Trending Lambda) — runs trending + every
+    # dashboard section query at full depth and writes index.html to the
+    # CloudFront-fronted dashboard bucket. Triggered by DQ SUCCEEDED.
+    # Single user-facing presentation surface (the analytics API and the
+    # standalone content-gap Lambda were retired in favour of dashboard-
+    # with-full-depth).
     Deploy-Stack "sdlf-pipeline-ott-trending" "$Tpl\pipeline-ott-trending.yaml" @(
         "pAthenaResultsBucket=$AthenaBucket",
         "pAthenaWorkgroupKmsKey=$KmsKey"
     )
 
-    # Gold layer was removed (the keyword_trends CTAS + Gold DQ had no
-    # user-facing consumer — the dashboard sources curated directly; the API
-    # serves CSV files). Delete the legacy goldquality stack if it exists.
-    $goldStatus = (aws cloudformation describe-stacks --stack-name sdlf-pipeline-ott-goldquality `
-        --region $Region --query "Stacks[0].StackStatus" --output text 2>$null)
-    if ($goldStatus -and $goldStatus -ne "None") {
-        Write-Host "  deleting legacy sdlf-pipeline-ott-goldquality stack ($goldStatus) ..." -NoNewline
-        aws cloudformation delete-stack --stack-name sdlf-pipeline-ott-goldquality --region $Region 2>&1 | Out-Null
-        aws cloudformation wait stack-delete-complete --stack-name sdlf-pipeline-ott-goldquality --region $Region 2>&1 | Out-Null
-        Write-Host " OK" -ForegroundColor Green
+    # Legacy stack cleanup — keep these idempotent deletes so re-runs tear
+    # down any stragglers from earlier revisions (gold layer, analytics API,
+    # standalone content-gap Lambda). $ErrorActionPreference is dropped to
+    # SilentlyContinue around the native aws calls: in PS 5.1 a missing-stack
+    # describe writes to stderr, which Stop-mode would otherwise treat as a
+    # terminating error.
+    foreach ($legacy in @(
+        "sdlf-pipeline-ott-goldquality",
+        "sdlf-pipeline-ott-contentgap",
+        "sdlf-pipeline-ott-api"
+    )) {
+        $ErrorActionPreference = "SilentlyContinue"
+        $status = aws cloudformation describe-stacks --stack-name $legacy `
+            --region $Region --query "Stacks[0].StackStatus" --output text 2>$null
+        $exists = ($LASTEXITCODE -eq 0)
+        $ErrorActionPreference = "Stop"
+        if ($exists -and $status -and $status -ne "None") {
+            Write-Host "  deleting legacy $legacy stack ($status) ..." -NoNewline
+            aws cloudformation delete-stack --stack-name $legacy --region $Region | Out-Null
+            aws cloudformation wait stack-delete-complete --stack-name $legacy --region $Region | Out-Null
+            Write-Host " OK" -ForegroundColor Green
+        }
     }
-
-    # 8. REST API — pApiKey sourced from SSM (generated once with scripts/rotate_api_key.py)
-    $ApiKey = (aws ssm get-parameter --name "/sdlf/ott/api-key/prod" `
-        --query "Parameter.Value" --output text --region $Region 2>$null)
-    if ((-not $ApiKey) -or $ApiKey -eq "None") {
-        Write-Fail "API key missing — populate SSM /sdlf/ott/api-key/prod before deploying the API stack"
+    # Drop the 7 Glue catalog tables that backed the retired API. The
+    # dashboard reads curated directly; these CSV-backed tables had no
+    # remaining consumer.
+    $ErrorActionPreference = "SilentlyContinue"
+    foreach ($legacyTable in @(
+        "trending_all","trending_unknown","content_gaps","premium_vs_free",
+        "repeat_search_rate","hour_of_day_heatmap","guest_vs_auth_demand"
+    )) {
+        aws glue delete-table --database-name fpt_ott_searchevents_analytics `
+            --name $legacyTable --region $Region 2>$null | Out-Null
     }
-    Deploy-Stack "sdlf-pipeline-ott-api" "$Tpl\pipeline-ott-api.yaml" @(
-        "pApiKey=$ApiKey"
-    )
+    $ErrorActionPreference = "Stop"
 
-    # 9. Lake Formation column-level RBAC (fully SSM-defaulted)
+    # 7. Lake Formation column-level RBAC (fully SSM-defaulted)
     Deploy-Stack "sdlf-pipeline-ott-lakeformation" "$Tpl\pipeline-ott-lakeformation.yaml"
 
-    # 10. Monitoring dashboards + alarms (fully SSM-defaulted)
+    # 8. Monitoring dashboards + alarms (fully SSM-defaulted)
     Deploy-Stack "sdlf-pipeline-ott-monitoring" "$Tpl\pipeline-ott-monitoring.yaml"
 
-    # 11. Dashboard hosting — private S3 bucket + CloudFront (OAC). The Trending
+    # 9. Dashboard hosting — private S3 bucket + CloudFront (OAC). The Trending
     # Lambda's write_dashboard() publishes the search-analytics dashboard here.
     Deploy-Stack "sdlf-pipeline-ott-dashboard" "$Tpl\pipeline-ott-dashboard.yaml"
 
-    Write-OK "All 11 stacks deployed"
+    Write-OK "All 9 stacks deployed"
+
+    # Push live Lambda code. `aws cloudformation deploy` does NOT re-fetch an
+    # unchanged S3 key, so a code-only change (same lambda/<name>.zip key) is
+    # invisible to CFN — the function would keep stale code while its config
+    # updates. Mirror the CI/CD buildspec post_build step explicitly.
+    Write-Host "  pushing analytics Lambda code to the live functions ..."
+    & python "$Repo\scripts\package_and_deploy_lambdas.py" --update-live
+    if ($LASTEXITCODE -ne 0) { Write-Fail "Live Lambda code update failed" }
 }
 
 # ── Ingest trigger + Stage A → B → DQ wait ────────────────────────────────────
@@ -334,31 +357,19 @@ if (-not $SkipIngest -or $AnalyticsOnly) {
         return Get-Content $Response -Raw | ConvertFrom-Json
     }
 
-    # Content Gap (~3 min, 5 sequential Athena queries)
-    Write-Host "  invoking sdlf-ott-mainCG-report ..." -NoNewline
-    $cg = Invoke-Lambda -Name sdlf-ott-mainCG-report -Payload $payloadPath -Response $responsePath
-    if (-not $cg) {
-        Write-Host ""; Write-Warn "Content Gap invocation failed (check CloudWatch logs)"
-    } elseif ($cg.PSObject.Properties.Name -contains "errorMessage") {
-        Write-Host ""; Write-Warn "Content Gap error: $($cg.errorMessage)"
-    } else {
-        Write-Host " OK" -ForegroundColor Green
-        if ($cg.errors -gt 0) { Write-Warn "  $($cg.errors) query error(s)" }
-        else { Write-OK "  reports: $($cg.reports | ConvertTo-Json -Compress)" }
-        if ($cg.report_url) { Write-Host "  dashboard: $($cg.report_url)" }
-    }
-
-    # Trending (~2 min, week-over-week Athena queries)
+    # Dashboard renderer (Trending Lambda) — runs trending + every dashboard
+    # section query concurrently against curated, writes index.html to the
+    # CloudFront dashboard bucket.
     Write-Host "  invoking sdlf-ott-mainTR-report ..." -NoNewline
     $tr = Invoke-Lambda -Name sdlf-ott-mainTR-report -Payload $payloadPath -Response $responsePath
     if (-not $tr) {
-        Write-Host ""; Write-Warn "Trending invocation failed (check CloudWatch logs)"
+        Write-Host ""; Write-Warn "Dashboard renderer invocation failed (check CloudWatch logs)"
     } elseif ($tr.PSObject.Properties.Name -contains "errorMessage") {
-        Write-Host ""; Write-Warn "Trending error: $($tr.errorMessage)"
+        Write-Host ""; Write-Warn "Dashboard renderer error: $($tr.errorMessage)"
     } else {
         Write-Host " OK" -ForegroundColor Green
         if ($tr.errors -gt 0) { Write-Warn "  $($tr.errors) error(s)" }
-        else { Write-OK "  mode:$($tr.mode)  unknown_targets:$($tr.reports.trending_unknown)" }
+        else { Write-OK "  mode:$($tr.mode)  trending_rows:$($tr.trending_rows)  bytes:$($tr.dashboard_bytes)" }
     }
 
     # LUT Refresh: async (15-min Lambda; results visible in next Stage B run)
@@ -417,9 +428,7 @@ if (-not $Status) {
     if ($LASTEXITCODE -ne 0) { Write-Warn "LF grants helper reported failures" }
 
     Write-Step "Post-deploy: contract test"
-    $env:OTT_API_KEY = (aws ssm get-parameter --name "/sdlf/ott/api-key/prod" `
-        --query "Parameter.Value" --output text --region $Region)
     & python "$Repo\scripts\contract_test.py"
     if ($LASTEXITCODE -ne 0) { Write-Fail "Contract test FAILED — production behavior regressed" }
-    Write-OK "All 16 contract assertions passed."
+    Write-OK "Contract test passed."
 }

@@ -7,8 +7,8 @@ in a terminal or markdown context.
 Notes on read access:
 - raw_search_events is NOT queryable from the analyst Athena role (KMS-locked
   to the Lake Formation data-access role only). That's intentional — raw is the
-  private "data lake" layer; analysts query curated/gold.
-- curated, gold.keyword_trends, and dq_results are all readable.
+  private "data lake" layer; analysts query curated.
+- curated and dq_results are readable.
 
 Usage:
     python D:/ott-sdlf/scripts/audit_visuals.py
@@ -22,7 +22,6 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="repla
 
 REGION = "ap-southeast-1"
 DB = "fpt_ott_searchevents_analytics"
-GOLD_DB = "fpt_ott_searchevents_gold"
 WORKGROUP = "sdlf-ott"
 OUTPUT = "s3://fpt-ott-ap-southeast-1-703668403514-athena-prod/audit-visuals/"
 
@@ -156,34 +155,19 @@ h, r = run(
 )
 print_bar(h, r)
 
-# ── Section 3: Gold layer — pre-computed rankings for API ─────────────────────
+# ── Section 3: Data quality observations ──────────────────────────────────────
 print("\n" + "=" * 78)
-print("3. GOLD LAYER — pre-computed rankings for end users")
+print("3. DATA QUALITY OBSERVATIONS")
 print("=" * 78)
 
-print("\n3a. Gold table size + sample of top-ranked rows")
-h, r = run(
-    f"""SELECT keyword_norm, derived_genre, platform_group, search_count, rank_today
-       FROM {GOLD_DB}.keyword_trends ORDER BY search_count DESC LIMIT 5""",
-    "gold-top",
-)
-print_table(h, r)
-h, r = run(f"SELECT COUNT(*) FROM {GOLD_DB}.keyword_trends", "gold-count")
-print(f"  Total gold rows: {int(r[0][0]):,}")
-
-# ── Section 4: Data quality observations ──────────────────────────────────────
-print("\n" + "=" * 78)
-print("4. DATA QUALITY OBSERVATIONS")
-print("=" * 78)
-
-print("\n4a. Authentication mix (user_id present vs anonymous)")
+print("\n3a. Authentication mix (user_id present vs anonymous)")
 h, r = run(
     f"SELECT user_is_authenticated, COUNT(*) FROM {DB}.curated GROUP BY user_is_authenticated",
     "auth-mix",
 )
 print_table(h, r)
 
-print("\n4b. DQ outcomes (latest runs, cumulative)")
+print("\n3b. DQ outcomes (latest runs, cumulative)")
 h, r = run(
     f"""SELECT outcome, COUNT(*) AS rules
        FROM {DB}.dq_results GROUP BY outcome ORDER BY rules DESC""",
@@ -191,7 +175,7 @@ h, r = run(
 )
 print_table(h, r)
 
-print("\n4c. Classifier coverage — UNKNOWN/EMPTY_QUERY share")
+print("\n3c. Classifier coverage — UNKNOWN/EMPTY_QUERY share")
 h, r = run(
     f"""SELECT derived_genre, COUNT(*) AS rows,
               ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 1) AS pct

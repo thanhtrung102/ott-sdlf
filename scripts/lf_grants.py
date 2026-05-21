@@ -9,7 +9,7 @@ This script pre-emptively grants ALL to:
   - terraform-admin (the human admin who runs ad-hoc deploys)
   - sdlf-ott-cicd-codebuild (the role CodeBuild assumes during CI/CD)
 
-on every OTT-managed table in both the analytics and gold databases.
+on every OTT-managed table in the analytics database.
 
 Idempotent: re-running is a no-op (LF treats duplicate grants as success).
 Run after any time a new table is created — or as a one-off cleanup like now.
@@ -31,7 +31,6 @@ CATALOG_ID = "703668403514"
 
 DATABASES = [
     "fpt_ott_searchevents_analytics",
-    "fpt_ott_searchevents_gold",
 ]
 
 PRINCIPALS = [

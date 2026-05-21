@@ -6,7 +6,7 @@ chapter: false
 pre: " <b> 5.5 </b> "
 ---
 
-The DQ state machine just emitted `DQ SUCCEEDED`. Three Lambdas fan out from that event. This chapter shows each one running and reads back the concrete output.
+The DQ state machine just emitted `DQ SUCCEEDED`. Two Lambdas fan out from that event. This chapter shows each one running and reads back the concrete output.
 
 ---
 
@@ -15,27 +15,28 @@ The DQ state machine just emitted `DQ SUCCEEDED`. Three Lambdas fan out from tha
 ```
 DQ SM SUCCEEDED
    │
-   ├─► Trending Lambda  ── Athena (CSVs + 9 concurrent queries) ── CloudFront index.html
-   │
-   ├─► Content Gap Lambda ── 5 Athena queries ── CSVs (back the /content-gaps API) ── SNS
+   ├─► Dashboard renderer (Trending Lambda)
+   │      ─ 9 concurrent Athena queries over curated
+   │      ─ trending + KPIs + every business-question section
+   │      ─ Writes index.html → S3 → CloudFront
    │
    └─► LUT-Refresh Lambda ── Top-N UNKNOWN keywords ── Bedrock Claude ── classifier zip
 ```
 
-All three Lambdas finish within ~5 minutes total of wall-clock time after `DQ SUCCEEDED`.
+Both Lambdas finish within ~5 minutes total wall-clock of `DQ SUCCEEDED`. The CloudFront dashboard is the **single user-facing surface** — every business-question section reads `curated` live, with the dt window stamped on each section caption.
 
 ---
 
-## 5.5.2 Trending Lambda — week-over-week growth
+## 5.5.2 Dashboard renderer (Trending Lambda) — single user-facing surface
 
-The three Lambda invocations in §5.5.2–§5.5.4 share a payload. Write it to a file once — that sidesteps PowerShell's quote stripping on native CLI args *and* AWS CLI v2's default base64 expectation for inline `--payload` strings (CLI v2 raises `Invalid base64` on the raw JSON).
+Write the shared invocation payload once. This sidesteps PowerShell's quote stripping on native CLI args *and* AWS CLI v2's default base64 expectation for inline `--payload` strings (CLI v2 raises `Invalid base64` on the raw JSON).
 
 ```powershell
 '{"source":"workshop","detail-type":"Manual Trigger"}' |
   Out-File -Encoding ASCII -NoNewline C:\tmp\lambda-payload.json
 ```
 
-Then invoke Trending:
+Then invoke the dashboard renderer:
 
 ```powershell
 aws lambda invoke --function-name sdlf-ott-mainTR-report --region ap-southeast-1 `
@@ -44,58 +45,48 @@ aws lambda invoke --function-name sdlf-ott-mainTR-report --region ap-southeast-1
 Get-Content C:\tmp\trending-out.json
 ```
 
-**Expected** (live — rows vary with the latest dt partition you ingested):
+**Expected** (live — values vary with the latest dt partition you ingested):
 
 ```json
 {
   "dt": "2022-06-23",
-  "mode": "fallback/volume-only",
-  "reports": {
-    "trending_all": 598,
-    "trending_unknown": 33,
-    "dashboard_bytes": 33145
-  },
-  "prefixes": {
-    "all": "s3://...-stage-prod/analytics/trending/all/2022-06-23/",
-    "unknown": "s3://...-stage-prod/analytics/trending/unknown/2022-06-23/"
-  },
+  "mode": "fallback / volume-only",
+  "trending_rows": 500,
+  "dashboard_bytes": 245312,
   "errors": 0
 }
 ```
 
-> `mode: fallback/volume-only` indicates fewer than 4 weeks of historical data — the growth comparison falls back to raw volume ranking. With ≥4 weeks ingested, `mode` becomes `growth >=3.0x`.
+> `mode: fallback / volume-only` indicates fewer than 4 weeks of historical data — the growth comparison falls back to raw volume ranking. With ≥4 weeks ingested, `mode` becomes `growth ≥ 3x`.
 
 `dashboard_bytes` is the size of the freshly-rendered `index.html` published to the CloudFront-fronted dashboard bucket — see [§5.6.3](../5.6-verify/#563-the-dashboard).
 
 ---
 
-## 5.5.3 Content Gap Lambda — 5 daily reports + HTML dashboard
+## 5.5.3 What the renderer queries
 
-```powershell
-aws lambda invoke --function-name sdlf-ott-mainCG-report --region ap-southeast-1 `
-  --cli-read-timeout 0 --payload fileb://C:\tmp\lambda-payload.json `
-  C:\tmp\cg-out.json
-Get-Content C:\tmp\cg-out.json
+The Lambda runs nine Athena queries concurrently against `curated`, then assembles the result into one HTML document:
+
+| Section | Query | Depth |
+|---|---|---|
+| `dt_window` | `MIN(dt) / MAX(dt) / COUNT(DISTINCT dt)` — drives the source-attribution caption | scalar |
+| `totals` | overall row count, distinct keywords, abandon rate | scalar |
+| `platform` | `GROUP BY platform_group` | ~6 rows |
+| `genre` | `GROUP BY derived_genre` | ~10 rows |
+| `keywords` | top 20 keywords by volume | 20 rows |
+| `content_gaps` | top-abandoned titles (excludes UNKNOWN/EMPTY_QUERY, HAVING abandoned ≥5) | 500 rows |
+| `premium` | premium share per genre | all genres |
+| `repeat` | repeat-search share per genre | all genres |
+| `guest` | guest demand per genre | all genres |
+| `hour_genre` | hour × genre matrix | 216 rows (24 × 9) |
+
+All sections are stamped with the dt window they actually aggregated. The header caption reads:
+
+```
+Source: curated — 2022-06-01 → 2022-06-23 • 23 days • 1,151,234 rows — generated ...
 ```
 
-**Expected** (live 2026-05-20):
-
-```json
-{
-  "dt": "2022-06-22",
-  "reports": {
-    "content_gaps": 500,
-    "premium_vs_free": 10,
-    "repeat_search_rate": 10,
-    "hour_of_day_heatmap": 216,
-    "guest_vs_auth_demand": 9
-  },
-  "dashboard_url": "https://d3bdq70ai5wf18.cloudfront.net",
-  "errors": 0
-}
-```
-
-The Lambda no longer renders its own HTML report — the five content-gap reports are now sections on the **centralized CloudFront dashboard** (see [§5.6.3](../5.6-verify/#563-the-dashboard)). The Content-Gap Lambda's job is to keep the five CSVs fresh; those back `GET /content-gaps` on the HTTP API. Its SNS notification now links to the CloudFront dashboard.
+If any days are missing from the window, the caption lists them (e.g., `• 2 missing (2022-06-16; 2022-06-19)`).
 
 ---
 
@@ -129,89 +120,31 @@ aws logs tail /aws/lambda/sdlf-ott-mainLUT-refresh --since 5m --follow --region 
 
 ---
 
-## 5.5.5 HTTP API — read the trending data programmatically
+## 5.5.5 Open the dashboard
 
 ```powershell
-$API = aws ssm get-parameter --name /sdlf/pipeline/rApiUrl/ott --region ap-southeast-1 --query Parameter.Value --output text
-$KEY = aws ssm get-parameter --name /sdlf/ott/api-key/prod --region ap-southeast-1 --query Parameter.Value --output text
-
-# Top 5 trending keywords (all genres)
-Invoke-RestMethod -Uri "$API/trending?limit=5" -Headers @{"x-api-key" = $KEY}
+$DASH = aws ssm get-parameter --name /sdlf/pipeline/rDashboardUrl/ott --region ap-southeast-1 --query Parameter.Value --output text
+Start-Process $DASH
 ```
 
-**Expected** (live 2026-05-20 — counts vary with the latest dt; diacritics preserved end-to-end):
+You'll see one page with:
+
+- **Four KPI cards** — total searches, distinct keywords, overall abandon rate, top genre.
+- **Volume views** — searches by platform, genre distribution, top 20 keywords, platform abandon rates.
+- **Business-question sections** (each stamped with its dt window):
+  - **Trending Keywords** — 500-row filterable list, by keyword + genre.
+  - **Content Gaps** — 500-row filterable list of top-abandoned titles.
+  - **Premium vs Free / Repeat Search / Guest vs Authenticated** — per-genre share tables.
+  - **Search Volume by Hour × Genre** — 24 × 9 heatmap with per-hour totals row at the bottom.
+
+Every section header carries a `.src` caption like:
 
 ```
-keyword_norm                                       derived_genre   current_cnt
--------------------------------------------------- --------------  -----------
-nữ thanh tra tài ba                                PHIM_VIET       470
-sao băng                                           PHIM_HAN        459
-liên minh công lý: phiên bản của zack snyder       PHIM_AU_MY      417
-fairy tail                                         ANIME           334
-giữa thanh xuân                                    PHIM_VIET       230
+curated — abandon rate by keyword (excludes UNKNOWN+EMPTY_QUERY, HAVING abandoned ≥ 5)
+        — 2022-06-01 → 2022-06-23 • 23 days • 1,151,234 rows
 ```
 
-**Verify the freshness header**:
-
-```powershell
-$r = Invoke-WebRequest -Uri "$API/trending?limit=1" -Headers @{"x-api-key" = $KEY}
-$r.Headers.'X-Data-Freshness'
-$r.Headers.'Last-Modified'
-$r.Headers.'Cache-Control'
-```
-
-**Expected** (live 2026-05-20 — your timestamp will be from the latest Trending Lambda invocation):
-
-```
-2026-05-20T09:11:24+00:00
-Wed, 20 May 2026 09:11:24 +0000
-public, max-age=300
-```
-
-**Verify auth is enforced** — request without the header should return 401:
-
-```powershell
-try {
-  Invoke-WebRequest -Uri "$API/trending?limit=1" -ErrorAction Stop
-} catch {
-  "Status: $($_.Exception.Response.StatusCode.value__)"
-}
-```
-
-**Expected**:
-
-```
-Status: 401
-```
-
----
-
-## 5.5.6 Browse the 5 Content-Gap reports via API
-
-```powershell
-foreach ($r in @("content_gaps","premium_vs_free","repeat_search_rate","hour_of_day_heatmap","guest_vs_auth_demand")) {
-  $rows = Invoke-RestMethod -Uri "$API/content-gaps?report=$r&limit=2" -Headers @{"x-api-key" = $KEY}
-  Write-Host "`n=== $r (top 2) ==="
-  $rows | Format-List
-}
-```
-
-**Expected** (live 2026-05-20 — top 2 of `premium_vs_free`):
-
-```
-=== premium_vs_free (top 2) ===
-derived_genre     : PHIM_AU_MY
-total_searches    : 96763
-premium_searches  : 6120
-free_searches     : 90643
-premium_share_pct : 6.3
-
-derived_genre     : EMPTY_QUERY
-total_searches    : 95447
-premium_searches  : 4227
-free_searches     : 91220
-premium_share_pct : 4.4
-```
+That caption is the contract: it tells the stakeholder exactly what slice of `curated` the figures came from. If the dataset later grows or has gaps, the caption updates automatically on the next refresh.
 
 ---
 

@@ -169,30 +169,7 @@ aws s3api head-object --bucket "ott-search-$ACCT-prod" `
 
 ---
 
-## 5.2.6 Choose + store the API key
-
-The HTTP API is gated by an `x-api-key` header. The key value is a CloudFormation parameter; we store it in SSM at `/sdlf/ott/api-key/prod` so the CI/CD buildspec can fetch it deterministically.
-
-**Generate + store**:
-
-```powershell
-$key = -join ((48..57) + (97..122) + (65..90) | Get-Random -Count 32 | ForEach-Object {[char]$_})
-aws ssm put-parameter --name "/sdlf/ott/api-key/prod" --value $key --type String --overwrite `
-  --region ap-southeast-1 --description "x-api-key value for sdlf-ott-api Lambda"
-Write-Host "API key generated. Save somewhere safe — you'll need it to call the API."
-Write-Host "Key: $key"
-```
-
-**Verify**:
-
-```powershell
-aws ssm get-parameter --name "/sdlf/ott/api-key/prod" --region ap-southeast-1 --query "Parameter.Value" --output text
-# Expected: the 32-char alphanumeric string you just generated
-```
-
----
-
-## 5.2.7 Source data — 14 days of OTT Parquet
+## 5.2.6 Source data — 14 days of OTT Parquet
 
 The reference dataset is `fpt-search-events-2022-06-{01..14}.parquet` (~1.3 M events/day). For this workshop, the data is pre-staged in a public-read S3 bucket.
 
@@ -239,7 +216,6 @@ Before continuing, confirm all of these:
 - [ ] Bedrock Claude Haiku 4.5 model access granted.
 - [ ] SDLF foundation/team/dataset stacks deployed; SSM paths resolve.
 - [ ] `genre_classifier_pkg.zip` uploaded to the Glue bucket (`ott-search-…-prod`).
-- [ ] API key stored in `/sdlf/ott/api-key/prod`.
 - [ ] 14 raw Parquet partitions copied into raw bucket.
 
-When all seven check, proceed to [5.3 — Deploy](../5.3-deploy/).
+When all six check, proceed to [5.3 — Deploy](../5.3-deploy/).

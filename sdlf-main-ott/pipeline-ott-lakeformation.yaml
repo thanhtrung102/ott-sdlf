@@ -2,8 +2,8 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   OTT Lake Formation column-level permissions — grants SELECT on the curated
   table with user_id_hashed excluded for roles that do not need raw user
-  identifiers (ContentGap, LUT Refresh), and full SELECT for roles that
-  legitimately need the column (Trending, DQ, Crawler).
+  identifiers (LUT Refresh), and full SELECT for roles that legitimately
+  need the column (Dashboard renderer / Trending, DQ, Crawler).
 
   ACTIVATION NOTE: these grants are prepared but not enforced until
   IAM_ALLOWED_PRINCIPALS is revoked by a Lake Formation administrator:
@@ -22,9 +22,6 @@ Parameters:
   pCrawlerRoleArn:
     Type: AWS::SSM::Parameter::Value<String>
     Default: /sdlf/dataset/rDatalakeCrawlerRole/searchevents
-  pContentGapRoleArn:
-    Type: AWS::SSM::Parameter::Value<String>
-    Default: /sdlf/pipeline/rRole/ott-mainCG
   pLutRefreshRoleArn:
     Type: AWS::SSM::Parameter::Value<String>
     Default: /sdlf/pipeline/rRole/ott-mainLUT
@@ -39,27 +36,6 @@ Parameters:
     Default: /sdlf/pipeline/rRole/ott-mainDQGlue
 
 Resources:
-
-  # ContentGap Lambda — needs has_premium (premium_vs_free query) but not
-  # user identity, session IDs, or subscription counts.
-  rLFContentGap:
-    Type: AWS::LakeFormation::PrincipalPermissions
-    Properties:
-      Principal:
-        DataLakePrincipalIdentifier: !Ref pContentGapRoleArn
-      Resource:
-        TableWithColumns:
-          CatalogId: !Ref AWS::AccountId
-          DatabaseName: !Ref pDatabaseName
-          Name: curated
-          ColumnWildcard:
-            ExcludedColumnNames:
-              - user_id_hashed
-              - search_session_id
-              - subscription_count
-      Permissions:
-        - SELECT
-      PermissionsWithGrantOption: []
 
   # LUT Refresh Lambda — only reads keyword_norm + derived_genre; excludes
   # all user-fingerprinting columns.
@@ -83,7 +59,9 @@ Resources:
         - SELECT
       PermissionsWithGrantOption: []
 
-  # Trending Lambda — requires user_id_hashed for COUNT(DISTINCT) unique_users.
+  # Dashboard renderer (Trending Lambda) — runs every dashboard section query,
+  # needs full column access for keyword/genre rollups, abandon rates, premium
+  # share, and the hour×genre heatmap.
   rLFTrending:
     Type: AWS::LakeFormation::PrincipalPermissions
     Properties:

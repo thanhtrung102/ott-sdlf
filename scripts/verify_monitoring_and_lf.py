@@ -2,14 +2,14 @@
 
 "Deployed" != "works". This script checks:
   Monitoring
-    M1. All 17 alarms exist with sdlf-ott prefix.
+    M1. All 11 alarms exist with sdlf-ott prefix.
     M2. Each alarm has at least one alarm action (SNS, etc.).
     M3. The SNS notification topic has at least one subscriber.
     M4. At least one alarm has transitioned to ALARM in the last 30 days
         (proves the metric -> alarm -> state-change pipe works end-to-end).
     M5. CloudWatch dashboard exists.
   Lake Formation
-    L1. Curated table has the 7 expected grants.
+    L1. Curated table has the 5 expected grants.
     L2. IAM_ALLOWED_PRINCIPALS SELECT status (enforcement on or off).
     L3. Each role has the column exclusions documented in the template.
 
@@ -31,7 +31,6 @@ CURATED_TABLE = "curated"
 DASHBOARD_NAME = "sdlf-ott-searchevents-pipeline"
 
 EXPECTED_LF_GRANTS = {
-    "contentgap":   {"user_id_hashed", "search_session_id", "subscription_count"},
     "lutrefresh":   {"user_id_hashed", "search_session_id", "has_premium", "subscription_count"},
     "trending":     set(),
     "rDQExecu":     set(),
@@ -65,10 +64,10 @@ def verify_monitoring(session) -> None:
 
     # M1 alarms exist
     alarms = cw.describe_alarms(AlarmNamePrefix="sdlf-ott")["MetricAlarms"]
-    if len(alarms) >= 17:
-        record("PASS", "M1 alarm count", f"{len(alarms)} alarms (expected >=17)")
+    if len(alarms) >= 11:
+        record("PASS", "M1 alarm count", f"{len(alarms)} alarms (expected >=11)")
     else:
-        record("FAIL", "M1 alarm count", f"{len(alarms)} alarms (expected >=17)")
+        record("FAIL", "M1 alarm count", f"{len(alarms)} alarms (expected >=11)")
 
     # M2 every alarm has actions
     no_actions = [a["AlarmName"] for a in alarms if not a.get("AlarmActions")]

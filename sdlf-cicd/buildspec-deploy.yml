@@ -28,29 +28,39 @@ phases:
       - ATHENA_WG_CFG=$(aws athena get-work-group --work-group sdlf-ott --region $REGION --query "WorkGroup.Configuration.ResultConfiguration" --output json)
       - ATHENA_RESULTS_BUCKET=$(echo $ATHENA_WG_CFG | python3 -c "import json,sys; c=json.load(sys.stdin); print(c['OutputLocation'].split('/')[2])")
       - ATHENA_WG_KMS=$(echo $ATHENA_WG_CFG | python3 -c "import json,sys; c=json.load(sys.stdin); print(c.get('EncryptionConfiguration',{}).get('KmsKey',''))")
-      - API_KEY=$(aws ssm get-parameter --name "/sdlf/ott/api-key/prod" --query "Parameter.Value" --output text --region $REGION)
       # Discover the project bucket's KMS key so the LUT-Refresh role can write
       # the mirrored classifier zip (save_lut). The bucket is encrypted with a
       # different KMS key than the SDLF artifacts bucket.
       - PROJECT_KMS_ARN=$(aws s3api get-bucket-encryption --bucket "ott-search-${ACCOUNT}-prod" --region $REGION --query "ServerSideEncryptionConfiguration.Rules[0].ApplyServerSideEncryptionByDefault.KMSMasterKeyID" --output text)
-      - echo "Account $ACCOUNT  KMS $KMS_KEY  AthenaResultsBucket $ATHENA_RESULTS_BUCKET  AthenaWgKms $ATHENA_WG_KMS  ProjectKms $PROJECT_KMS_ARN  ApiKeyLen ${#API_KEY}"
+      - echo "Account $ACCOUNT  KMS $KMS_KEY  AthenaResultsBucket $ATHENA_RESULTS_BUCKET  AthenaWgKms $ATHENA_WG_KMS  ProjectKms $PROJECT_KMS_ARN"
       - |
-        # Gold layer removed — the keyword_trends CTAS, gold database, and
-        # Gold DQ state machine had no user-facing consumer (the dashboard
-        # sources curated directly; the API serves CSV files). Delete the
-        # legacy goldquality stack if it still exists. Idempotent: no-op on
-        # fresh deployments where the stack never existed.
-        GOLD_STATUS=$(aws cloudformation describe-stacks \
-          --stack-name sdlf-pipeline-ott-goldquality --region $REGION \
-          --query "Stacks[0].StackStatus" --output text 2>/dev/null || echo "NOT_FOUND")
-        if [ "$GOLD_STATUS" != "NOT_FOUND" ]; then
-          echo "Deleting legacy sdlf-pipeline-ott-goldquality stack ($GOLD_STATUS)..."
-          aws cloudformation delete-stack \
-            --stack-name sdlf-pipeline-ott-goldquality --region $REGION
-          aws cloudformation wait stack-delete-complete \
-            --stack-name sdlf-pipeline-ott-goldquality --region $REGION
-          echo "Goldquality stack deleted."
-        fi
+        # Legacy stack cleanup — keep these idempotent deletes so CI tears down
+        # any stragglers from earlier revisions. The gold layer was removed
+        # (the dashboard sources curated directly). The analytics API +
+        # content-gap Lambdas were retired in favour of dashboard-with-full-
+        # depth (single user-facing surface).
+        for legacy_stack in sdlf-pipeline-ott-goldquality sdlf-pipeline-ott-contentgap sdlf-pipeline-ott-api; do
+          STATUS=$(aws cloudformation describe-stacks \
+            --stack-name $legacy_stack --region $REGION \
+            --query "Stacks[0].StackStatus" --output text 2>/dev/null || echo "NOT_FOUND")
+          if [ "$STATUS" != "NOT_FOUND" ]; then
+            echo "Deleting legacy $legacy_stack stack ($STATUS)..."
+            aws cloudformation delete-stack \
+              --stack-name $legacy_stack --region $REGION
+            aws cloudformation wait stack-delete-complete \
+              --stack-name $legacy_stack --region $REGION
+            echo "$legacy_stack deleted."
+          fi
+        done
+      - |
+        # Drop the seven Glue catalog tables that backed the retired API.
+        # The dashboard reads curated directly; these CSV-backed tables had
+        # no remaining consumer.
+        for legacy_table in trending_all trending_unknown content_gaps premium_vs_free repeat_search_rate hour_of_day_heatmap guest_vs_auth_demand; do
+          aws glue delete-table --database-name "${CURATED_DB}" --name "$legacy_table" --region $REGION 2>/dev/null \
+            && echo "Dropped $CURATED_DB.$legacy_table" \
+            || true
+        done
 
   build:
     commands:
@@ -120,10 +130,11 @@ phases:
           pAthenaWorkgroupKmsKey=${ATHENA_WG_KMS} \
           pProjectBucketKmsKeyArn=${PROJECT_KMS_ARN}
 
-        deploy sdlf-pipeline-ott-contentgap sdlf-main-ott/pipeline-ott-contentgap.yaml \
-          pAthenaResultsBucket=${ATHENA_RESULTS_BUCKET} \
-          pAthenaWorkgroupKmsKey=${ATHENA_WG_KMS}
-
+        # Dashboard renderer — runs every dashboard section query at full
+        # depth (500-row content gaps, 216-row hour×genre heatmap) and writes
+        # index.html to the CloudFront-fronted dashboard bucket. Single
+        # user-facing presentation surface — the analytics API and the
+        # standalone content-gap Lambda were retired.
         deploy sdlf-pipeline-ott-trending sdlf-main-ott/pipeline-ott-trending.yaml \
           pAthenaResultsBucket=${ATHENA_RESULTS_BUCKET} \
           pAthenaWorkgroupKmsKey=${ATHENA_WG_KMS}
@@ -131,9 +142,6 @@ phases:
         deploy sdlf-pipeline-ott-monitoring sdlf-main-ott/pipeline-ott-monitoring.yaml
 
         deploy sdlf-pipeline-ott-lakeformation sdlf-main-ott/pipeline-ott-lakeformation.yaml
-
-        deploy sdlf-pipeline-ott-api sdlf-main-ott/pipeline-ott-api.yaml \
-          pApiKey=${API_KEY}
 
         # Dashboard hosting — private S3 bucket + CloudFront (OAC). The Trending
         # Lambda's write_dashboard() publishes index.html here every run.
@@ -150,11 +158,9 @@ phases:
           sdlf-pipeline-ott-mainB \
           sdlf-pipeline-ott-dataquality \
           sdlf-pipeline-ott-lutrefresh \
-          sdlf-pipeline-ott-contentgap \
           sdlf-pipeline-ott-trending \
           sdlf-pipeline-ott-monitoring \
           sdlf-pipeline-ott-lakeformation \
-          sdlf-pipeline-ott-api \
           sdlf-pipeline-ott-dashboard; do
           STATUS=$(aws cloudformation describe-stacks \
             --stack-name $stack --region $REGION \

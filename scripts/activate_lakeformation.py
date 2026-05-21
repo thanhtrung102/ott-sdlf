@@ -31,7 +31,6 @@ SSM_DB = "/sdlf/dataset/rAnalyticsGlueDataCatalog/searchevents"
 TABLE = "curated"
 
 ROLE_SSM_PATHS = {
-    "ContentGap":  "/sdlf/pipeline/rRole/ott-mainCG",
     "LutRefresh":  "/sdlf/pipeline/rRole/ott-mainLUT",
     "Trending":    "/sdlf/pipeline/rRole/ott-mainTR",
     "DQExec":      "/sdlf/pipeline/rRole/ott-mainDQExec",
@@ -39,7 +38,6 @@ ROLE_SSM_PATHS = {
 }
 
 COLUMN_EXCLUDES = {
-    "ContentGap":  ["user_id_hashed", "search_session_id", "subscription_count"],
     "LutRefresh":  ["user_id_hashed", "search_session_id", "has_premium", "subscription_count"],
     "Trending":    [],
     "DQExec":      [],

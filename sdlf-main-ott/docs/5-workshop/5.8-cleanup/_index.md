@@ -30,7 +30,7 @@ We'll re-enable / re-delete at the end.
 
 ---
 
-## 5.8.2 Delete the 11 OTT-managed stacks
+## 5.8.2 Delete the 9 OTT-managed stacks
 
 Reverse dependency order. The script below deletes in the safest sequence (consumers first, producers last).
 
@@ -42,11 +42,9 @@ if ($DASH) { aws s3 rm "s3://$DASH" --recursive --region ap-southeast-1 | Out-Nu
 
 $ORDER = @(
   "sdlf-pipeline-ott-dashboard",
-  "sdlf-pipeline-ott-api",
   "sdlf-pipeline-ott-lakeformation",
   "sdlf-pipeline-ott-monitoring",
   "sdlf-pipeline-ott-trending",
-  "sdlf-pipeline-ott-contentgap",
   "sdlf-pipeline-ott-lutrefresh",
   "sdlf-pipeline-ott-dataquality",
   "sdlf-pipeline-ott-mainB",   # deletes its 2 nested SDLF stacks too
@@ -59,17 +57,31 @@ foreach ($s in $ORDER) {
   aws cloudformation wait stack-delete-complete --stack-name $s --region ap-southeast-1
   Write-Host " OK"
 }
+
+# Idempotently drop any legacy stacks from earlier workshop revisions
+foreach ($legacy in @(
+  "sdlf-pipeline-ott-goldquality",
+  "sdlf-pipeline-ott-contentgap",
+  "sdlf-pipeline-ott-api"
+)) {
+  $status = (aws cloudformation describe-stacks --stack-name $legacy `
+    --region ap-southeast-1 --query "Stacks[0].StackStatus" --output text 2>$null)
+  if ($status -and $status -ne "None") {
+    Write-Host "Deleting legacy $legacy ($status) ..." -NoNewline
+    aws cloudformation delete-stack --stack-name $legacy --region ap-southeast-1
+    aws cloudformation wait stack-delete-complete --stack-name $legacy --region ap-southeast-1
+    Write-Host " OK"
+  }
+}
 ```
 
 **Expected output** (~10 min total — each stack ~30-90 s):
 
 ```
 Deleting sdlf-pipeline-ott-dashboard ... OK
-Deleting sdlf-pipeline-ott-api ... OK
 Deleting sdlf-pipeline-ott-lakeformation ... OK
 Deleting sdlf-pipeline-ott-monitoring ... OK
 Deleting sdlf-pipeline-ott-trending ... OK
-Deleting sdlf-pipeline-ott-contentgap ... OK
 Deleting sdlf-pipeline-ott-lutrefresh ... OK
 Deleting sdlf-pipeline-ott-dataquality ... OK
 Deleting sdlf-pipeline-ott-mainB ... OK
@@ -133,8 +145,8 @@ foreach ($b in @($RAW, $STAGE, $ANALYTICS, $ARTIFACTS)) {
 ## 5.8.4 Clean SSM parameters this workshop created
 
 ```powershell
-# The API key — workshop-specific
-aws ssm delete-parameter --name /sdlf/ott/api-key/prod --region ap-southeast-1
+# The legacy API key (if it still exists from an earlier workshop revision)
+aws ssm delete-parameter --name /sdlf/ott/api-key/prod --region ap-southeast-1 2>$null
 
 # Pipeline-specific SSM exports created by stack deletions are removed automatically.
 ```

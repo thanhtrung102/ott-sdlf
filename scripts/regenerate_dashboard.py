@@ -1,14 +1,13 @@
 """Save a local copy of the live OTT dashboard.
 
-Since the sdlf-pipeline-ott-dashboard stack was added, the Trending Lambda
-regenerates the dashboard into S3 + CloudFront on every pipeline run
-(write_dashboard in lambda/trending/src/lambda_function.py). The dashboard is
-therefore always current and population-true — sourced from the unfiltered
-fpt_ott_searchevents_analytics.curated table, not the volume-thresholded gold
-table.
+The dashboard renderer Lambda (Trending Lambda) regenerates the dashboard
+into S3 + CloudFront on every pipeline run (write_dashboard in
+lambda/trending/src/lambda_function.py). The dashboard is therefore always
+current and population-true — sourced from the unfiltered
+fpt_ott_searchevents_analytics.curated table.
 
-This script no longer queries Athena or bakes numbers itself. It just pulls
-the live dashboard down to dashboard/index.html for offline viewing.
+This script just pulls the live dashboard down to dashboard/index.html for
+offline viewing.
 
 Usage:
     python D:/ott-sdlf/scripts/regenerate_dashboard.py

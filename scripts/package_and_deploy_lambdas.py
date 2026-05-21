@@ -35,10 +35,8 @@ LAMBDA_ROOT = REPO / "sdlf-main-ott" / "lambda"
 
 # (lambda-key, lambda-subdir, live-function-name)
 LAMBDAS = [
-    ("contentgap", "content-gap", "sdlf-ott-mainCG-report"),
     ("trending",   "trending",    "sdlf-ott-mainTR-report"),
     ("lutrefresh", "lut-refresh", "sdlf-ott-mainLUT-refresh"),
-    ("api",        "api",         "sdlf-ott-api"),
 ]
 
 
@@ -57,7 +55,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--update-live", action="store_true",
                         help="Also call lambda:UpdateFunctionCode (for code-only changes)")
-    parser.add_argument("--only", help="Limit to one lambda key (contentgap|trending|lutrefresh|api)")
+    parser.add_argument("--only", help="Limit to one lambda key (trending|lutrefresh)")
     args = parser.parse_args()
 
     s3 = boto3.client("s3", region_name=REGION)

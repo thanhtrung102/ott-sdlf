@@ -12,7 +12,7 @@ This README explains what's in this directory and how the pieces fit together. F
 |---|---|
 | `template-cicd.yaml` | CloudFormation stack `sdlf-ott-cicd`. Defines the CodePipeline, two CodeBuild projects, the artifact bucket + KMS key, the CodeBuild IAM role, the notifier Lambda + SNS topic, and the EventBridge rule that fires the Lambda on pipeline failures. |
 | `buildspec-validate.yml` | The Validate stage's CodeBuild script. Runs `cfn-lint` against every `pipeline-ott-*.yaml`. ~30 s. |
-| `buildspec-deploy.yml` | The Deploy stage's CodeBuild script. Fetches SSM parameters (bucket names, KMS key, API key), then runs `aws cloudformation deploy` for each of the 11 OTT stacks in dependency order. ~15 min. |
+| `buildspec-deploy.yml` | The Deploy stage's CodeBuild script. Fetches SSM parameters (bucket names, KMS key), then runs `aws cloudformation deploy` for each of the 9 OTT stacks in dependency order. ~15 min. |
 
 ---
 
@@ -24,7 +24,7 @@ GitHub push to main
         ▼
 ┌────────────────┐    ┌──────────────────┐    ┌────────────────┐    ┌─────────────────┐
 │ Source         │ →  │ Validate         │ →  │ Deploy         │ →  │ Notify          │
-│ pull commit    │    │ cfn-lint × 11    │    │ deploy × 11    │    │ Lambda → SNS    │
+│ pull commit    │    │ cfn-lint × 9     │    │ deploy × 9     │    │ Lambda → SNS    │
 └────────────────┘    └──────────────────┘    └────────────────┘    └─────────────────┘
    ~10 s                  ~30 s                  ~15 min                ~5 s
 ```
@@ -35,22 +35,22 @@ EventBridge rule `sdlf-ott-cicd-failure` ALSO fires the notifier on any pipeline
 
 ## The CodeBuild IAM role (`sdlf-ott-cicd-codebuild`)
 
-Path `/sdlf-ott/`. Grants the role needs to deploy 11 stacks:
+Path `/sdlf-ott/`. Grants the role needs to deploy 9 stacks:
 
 | Capability | Why it's needed |
 |---|---|
-| `cloudformation:*` on `sdlf-pipeline-ott-*` + `sdlf-ott-searchevents-glue-job` | Deploy / update / describe the 11 OTT stacks. |
+| `cloudformation:*` on `sdlf-pipeline-ott-*` + `sdlf-ott-searchevents-glue-job` | Deploy / update / describe the 9 OTT stacks. |
 | `iam:Create/Delete/Update/Get/PassRole` scoped to `/sdlf-ott/` path | Create the Lambda execution roles each pipeline stack defines. |
-| `lambda:*` on `sdlf-ott-*` functions | Create + update Lambdas across the 4 analytics + 2 SDLF nested stacks. |
-| `states:*` on `sdlf-ott-*` state machines | Create + update the 4 Step Functions (Stage A, B, DQ, Gold DQ). |
+| `lambda:*` on `sdlf-ott-*` functions | Create + update the 2 analytics Lambdas + the SDLF nested-stack Lambdas. |
+| `states:*` on `sdlf-ott-*` state machines | Create + update the 3 Step Functions (Stage A, B, DQ). |
 | `events:*` on `sdlf-ott-*` rules | Create + update the EventBridge fan-out rules. |
-| `sqs:*` on `sdlf-ott-*` queues + KMS access for queue encryption | Create + update the 5 DLQs. |
+| `sqs:*` on `sdlf-ott-*` queues + KMS access for queue encryption | Create + update the 4 DLQs. |
 | `sns:*` on the notifications topic | Subscribe analytics Lambdas to publish. |
-| `apigateway:*` on the HTTP API | Create the `/trending` and `/content-gaps` API. |
 | `glue:CreateJob/UpdateJob/DeleteJob/GetJob/TagResource` on `job/sdlf-ott-*` | Manage the ETL Glue job. |
-| `glue:GetDatabase/GetTable/GetPartitions` on `catalog`+`database/*`+`table/*/*` | Read existing catalog state during CFN diffing. |
+| `glue:GetDatabase/GetTable/GetPartitions/DeleteTable` on `catalog`+`database/*`+`table/*/*` | Read existing catalog state and idempotently drop legacy CSV-backed tables. |
 | `glue:CreateDatabase` / **`glue:UpdateDatabase`** / `DeleteDatabase`, `CreateTable`/`UpdateTable`/`DeleteTable`, `CreateCrawler`/`UpdateCrawler`/`DeleteCrawler`/`GetCrawler` on `catalog`+`database/*`+`table/*/*`+`crawler/*` | Manage Glue databases + tables + crawlers across stacks. |
 | `athena:CreateWorkGroup/...` (scoped) + Bedrock invoke + SSM read on `/sdlf/...` | Workgroup management, classifier model, parameter lookup. |
+| `cloudfront:CreateDistribution/UpdateDistribution/...` scoped to the dashboard distribution | Manage the OAC-fronted dashboard distribution. |
 | Lake Formation: this role is also a data lake admin (added via `pipeline-ott-lakeformation.yaml`) | So it can run the `lakeformation:revoke-permissions` step on `IAM_ALLOWED_PRINCIPALS`. |
 
 > **Important gotcha**: `glue:UpdateDatabase` is required even though no template explicitly modifies the database — CFN's stack-update flow calls `UpdateDatabase` to verify drift on every no-op update. Missing it makes any subsequent deploy fail with `is not authorized to perform: glue:UpdateDatabase`. We hit this on 2026-05-20 — added it to template-cicd.yaml as part of commit 32c5b9d.
@@ -77,9 +77,8 @@ Pre-build resolves these SSM parameters into env vars:
 | `CRAWLER_ROLE` | `/sdlf/dataset/rDatalakeCrawlerRole/searchevents` |
 | `STAGE_B_SM_ARN` | `/sdlf/pipeline/rStateMachine/ott-mainB` |
 | `ATHENA_RESULTS_BUCKET` + `ATHENA_WG_KMS` | derived from `aws athena get-work-group --work-group sdlf-ott` |
-| `API_KEY` | `/sdlf/ott/api-key/prod` |
 
-Build runs `aws cloudformation deploy` for each of the 11 stacks in dependency order. The order matches the workshop's [chapter 3 deployment list](../sdlf-main-ott/docs/workshop/3-deploy/) exactly.
+Build runs `aws cloudformation deploy` for each of the 9 stacks in dependency order. The order matches the workshop's [chapter 3 deployment list](../sdlf-main-ott/docs/workshop/3-deploy/) exactly.
 
 Post-build verifies each stack reached `CREATE_COMPLETE` or `UPDATE_COMPLETE`; exits 1 if any didn't.
 

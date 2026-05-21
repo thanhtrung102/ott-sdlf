@@ -6,47 +6,45 @@ chapter: false
 pre: " <b> 5.6 </b> "
 ---
 
-The pipeline ran, the analytics fired, the API answered. This chapter runs three reproducible verification tools that turn "looks fine" into "16 assertions passed, here's the proof".
+The pipeline ran, the analytics fired, the dashboard refreshed. This chapter runs three reproducible verification tools that turn "looks fine" into "every contract assertion passed, here's the proof".
 
 ---
 
-## 5.6.1 The contract test (16 assertions)
+## 5.6.1 The contract test
 
-`scripts/contract_test.py` is the regression test that runs on every CI/CD deploy. It checks the end-user-facing contracts that have broken in past iterations.
+`scripts/contract_test.py` is the regression test that runs on every CI/CD deploy. It checks the end-user-facing contracts that have broken in past iterations — now centred on the CloudFront dashboard as the **single user-facing surface**.
 
-> 💡 **TIP:** This is the single most useful verification command in the workshop. If `All contracts passed.` prints, the pipeline is healthy end-to-end (API + dashboard + Athena catalog).
+> 💡 **TIP:** This is the single most useful verification command in the workshop. If `All contracts passed.` prints, the pipeline is healthy end-to-end (dashboard + Athena catalog).
 
 ```powershell
-$env:OTT_API_KEY = (aws ssm get-parameter --name /sdlf/ott/api-key/prod `
-  --region ap-southeast-1 --query Parameter.Value --output text)
-
 python D:\ott-sdlf\scripts\contract_test.py
 ```
 
-**Expected** (live output, captured 2026-05-20):
+**Expected** (live output, sample):
 
 ```
-=== Contract: REST API ===
-  [PASS] API rejects request without x-api-key (P0a auth)  (status=401)
-  [PASS] API rejects wrong x-api-key (P0a auth)  (status=401)
-  [PASS] API /content-gaps returns 3 rows  (got 3)
-  [PASS] API content_gaps top row has non-empty keyword  (top keyword='nguyen l')
-  [PASS] API /content-gaps?report=premium_vs_free returns 2 rows
-  [PASS] premium_vs_free top has numeric premium_share_pct  (pct=6.3)
-  [PASS] API /trending returns 3 rows
-  [PASS] API exposes X-Data-Freshness header (P0b)  (X-Data-Freshness='2026-05-20T09:11:24+00:00')
-  [PASS] API exposes Last-Modified header (P0b)  (Last-Modified='Wed, 20 May 2026 09:11:24 +0000')
-  [PASS] trending top row is NOT EMPTY_QUERY (N1 regression)  (top kw='nữ thanh tra tài ba' genre=PHIM_VIET)
-
-=== Contract: Dashboard HTML artifact + presigned URL ===
-  [PASS] CG dashboard date directory exists  (latest=analytics/content-gap/report/2022-06-22/)
-  [PASS] Dashboard report.html exists & non-trivial size  (size=60322)
-  [PASS] Dashboard URL: HTTP 200 + <html (L5 SigV4 regression)  (status=200 starts='<!DOCTYPE html>...')
+=== Contract: CloudFront dashboard (single user-facing surface) ===
+  [PASS] Dashboard URL is published to SSM  (url=https://d3bdq70ai5wf18.cloudfront.net)
+  [PASS] Dashboard returns HTTP 200 + non-trivial HTML  (status=200 bytes=245312)
+  [PASS] Dashboard section present: Total Searches
+  [PASS] Dashboard section present: Distinct Keywords
+  [PASS] Dashboard section present: Top 20 Keywords
+  [PASS] Dashboard section present: Trending Keywords
+  [PASS] Dashboard section present: Content Gaps
+  [PASS] Dashboard section present: Premium vs Free
+  [PASS] Dashboard section present: Repeat Search Rate
+  [PASS] Dashboard section present: Guest vs Authenticated
+  [PASS] Dashboard section present: Search Volume by Hour
+  [PASS] Header carries source-attribution caption
+  [PASS] Every section header has its own .src caption (>=9)  (found=10)
+  [PASS] Filterable tables (Trending + Content Gaps) carry deep rows  (data-kw tr count=...)
+  [PASS] Hour×genre heatmap rendered (>=200 cells)  (hcell count=...)
 
 === Contract: Athena catalog ===
   [PASS] Athena: derived_genre partition queryable (L3 regression)  (row=['PHIM_HAN', '6270'])
   [PASS] Athena: dq_results queryable (L7 LF regression)  (row=['Failed', '41'])
   [PASS] Athena: raw_search_events.action visible (L8 regression)  (row=['search'])
+  [PASS] Dashboard trending top row is NOT EMPTY_QUERY (N1 regression)
 
 All contracts passed.
 ```
@@ -63,7 +61,7 @@ This script runs a battery of Athena queries and renders ASCII charts so you can
 python D:\ott-sdlf\scripts\audit_visuals.py
 ```
 
-**Expected** (live 2026-05-20 — abbreviated to key sections; numbers are for the 19-partition reference deploy):
+**Expected** (live — abbreviated; numbers are for the reference deploy):
 
 ```
 ==============================================================================
@@ -77,14 +75,7 @@ python D:\ott-sdlf\scripts\audit_visuals.py
   ANIME           143,269  ███████████████████
   PHIM_AU_MY       96,763  █████████████
   EMPTY_QUERY      95,447  ████████████
-  PHIM_HAN         93,674  ████████████
-  NHAC             45,893  ██████
-  TRUYEN_HINH      45,277  ██████
-  THE_THAO         34,619  ████
-
-1b. Curated retention vs the published LINEAGE log
-  Curated rows: 1,241,273
-  LINEAGE log (latest Glue run): raw=1,298,470 -> output=1,145,826 (retention=0.882)
+  ...
 
 ==============================================================================
 2. END-USER VALUE — actual insights this delivers
@@ -102,24 +93,28 @@ python D:\ott-sdlf\scripts\audit_visuals.py
   0      62,302  █████████████████████████
   2      92,809  ██████████████████████████████████████
   3      96,560  ████████████████████████████████████████   ← peak (3 AM VN)
-  11      5,771  ██                                          ← trough (11 AM)
-  17     67,356  ███████████████████████████
-  18     75,094  ███████████████████████████████
 ```
 
-The full output is ~80 lines. Use it whenever you want a quick eyeball check on data shape without composing Athena queries by hand.
+Use it whenever you want a quick eyeball check on data shape without composing Athena queries by hand.
 
 ---
 
 ## 5.6.3 The dashboard
 
-The CloudFront dashboard is the **single stakeholder-facing presentation surface** — it contains every insight the pipeline produces. The `sdlf-pipeline-ott-dashboard` stack hosts it on a private S3 bucket fronted by CloudFront (Origin Access Control). The Trending Lambda regenerates `index.html` into that bucket on **every pipeline run** (`write_dashboard`), running its nine section queries concurrently against Athena.
+The CloudFront dashboard is the **single stakeholder-facing presentation surface** — it contains every insight the pipeline produces. The `sdlf-pipeline-ott-dashboard` stack hosts it on a private S3 bucket fronted by CloudFront (Origin Access Control). The dashboard renderer Lambda (Trending Lambda) regenerates `index.html` into that bucket on **every pipeline run** (`write_dashboard`), running its nine section queries concurrently against Athena.
 
-Every figure is **population-true** — sourced from the unfiltered `fpt_ott_searchevents_analytics.curated` table (~1.24 M search events). Sections rendered:
+Every figure is **population-true** — sourced from the unfiltered `fpt_ott_searchevents_analytics.curated` table. Every section carries a `.src` caption stating exactly which dt window was aggregated, the row count, and any missing days — so a stakeholder can never mis-read "1.15M searches" without seeing that the data spans Jun 1–Jun 23, 2022 with two days missing.
 
+Sections rendered:
+
+- **Header strip** — overall dt window stamp: `Source: curated — 2022-06-01 → 2022-06-23 • 23 days • 1,151,234 rows`
 - **KPIs** — total searches, distinct keywords, overall abandon rate, top genre
-- **Volume** — searches by platform (bar), genre distribution (donut + table), top-20 keywords (table), platform abandon rates (horizontal bar)
-- **Business questions** — trending keywords (7-day), content gaps (top-abandoned titles), premium vs free demand, repeat search rate, guest vs authenticated, search volume by hour-of-day
+- **Volume** — searches by platform, genre distribution, top-20 keywords, platform abandon rates
+- **Business questions** — every section stamped with its dt window:
+  - **Trending Keywords** — 500-row in-page-filterable list (by keyword + genre); window caption shows both the current 7-day slice and the 4-week baseline
+  - **Content Gaps** — 500-row filterable list of top-abandoned titles
+  - **Premium vs Free / Repeat Search / Guest vs Authenticated** — per-genre share tables
+  - **Search Volume by Hour × Genre** — 24 × 9 heatmap with per-hour totals row
 
 Open the live dashboard (URL is published to SSM by the stack):
 
@@ -130,7 +125,7 @@ Write-Host "Dashboard: $URL"
 Start-Process $URL
 ```
 
-To save a local copy for offline viewing — `regenerate_dashboard.py` downloads the live page (it no longer queries Athena or bakes numbers):
+To save a local copy for offline viewing — `regenerate_dashboard.py` downloads the live page:
 
 ```powershell
 python D:\ott-sdlf\scripts\regenerate_dashboard.py
@@ -143,10 +138,10 @@ Live dashboard: https://<id>.cloudfront.net
 Saved local copy -> D:\ott-sdlf\dashboard\index.html  (NN,NNN bytes)
 ```
 
-> 📷 **Screenshot —** the dashboard open in a browser at its CloudFront URL: KPI tiles, platform/genre charts, top-20 keyword table, then the business-question sections (trending, content gaps, premium-vs-free, repeat-search, guest-vs-auth, hourly volume).
+> 📷 **Screenshot —** the dashboard open in a browser at its CloudFront URL: header source-attribution stamp, KPI tiles, platform/genre charts, top-20 keyword table, then the business-question sections (trending 500-row, content gaps 500-row, premium-vs-free, repeat-search, guest-vs-auth, hour×genre heatmap).
 > *Placeholder: capture and save as `01-dashboard.png` in this chapter folder, then replace this block with `![Search-analytics dashboard](01-dashboard.png)`.*
 
-The Content-Gap Lambda no longer renders its own HTML report — those five reports are now sections on the centralized dashboard. The Lambda still writes the five CSVs that back the HTTP API; its SNS notification links to the CloudFront URL.
+The retired analytics HTTP API and the standalone content-gap Lambda used to provide deep JSON access; their job is now done by the dashboard's in-page-filterable 500-row tables. No JSON endpoint to maintain, no key rotation, no duplicate truth.
 
 ---
 
@@ -161,7 +156,7 @@ Start-Process "https://ap-southeast-1.console.aws.amazon.com/cloudwatch/home?reg
 - Stage B SM duration percentiles (p50, p90, p99)
 - Stage A + Stage B DLQ depth
 - Glue job elapsed time + bytes read
-- Per-Lambda Invocations / Errors / Duration (LUT-Refresh, Content Gap, Trending)
+- Per-Lambda Invocations / Errors / Duration (LUT-Refresh, Dashboard renderer)
 
 > 📷 **Screenshot —** CloudWatch console: the `sdlf-ott-searchevents-pipeline` dashboard with all widgets populated.
 > *Placeholder: capture and save as `02-cloudwatch-dashboard.png` in this chapter folder, then replace this block with `![CloudWatch pipeline dashboard](02-cloudwatch-dashboard.png)`.*
@@ -171,50 +166,42 @@ aws cloudwatch describe-alarms --alarm-name-prefix sdlf-ott `
   --region ap-southeast-1 --query "MetricAlarms | length(@)" --output text
 ```
 
-**Expected**: `17` — the full alarm count.
+**Expected**: `11` — the full alarm count.
 
 ```powershell
 aws cloudwatch describe-alarms --alarm-name-prefix sdlf-ott `
   --region ap-southeast-1 --query "MetricAlarms[?StateValue=='ALARM'].AlarmName" --output text
 ```
 
-**Expected** (live): the two near-timeout alarms may show — `sdlf-ott-mainCG-report-near-timeout` and `sdlf-ott-mainLUT-refresh-near-timeout`. These fire when a Lambda's p90 duration nears its timeout; they are an early-warning signal, not an outage. Any `*-errors` or `*-sm-execution-failed` alarm in `ALARM`, however, must be fixed before declaring success. Chapter 5.7 covers this in detail.
+**Expected** (live): no alarms firing on a healthy pipeline. Any `*-errors`, `*-sm-execution-failed`, or `*-dlq-not-empty` alarm in `ALARM` must be fixed before declaring success. Chapter 5.7 covers this in detail.
 
 ---
 
-## 5.6.5 Live API hit with the freshness header
+## 5.6.5 Spot-check the dashboard live
 
-The most concise end-to-end verification: a single curl-equivalent against the API.
+The most concise end-to-end verification: a single HTTP GET against the CloudFront dashboard.
 
 ```powershell
-$API = aws ssm get-parameter --name /sdlf/pipeline/rApiUrl/ott --region ap-southeast-1 --query Parameter.Value --output text
-$KEY = aws ssm get-parameter --name /sdlf/ott/api-key/prod --region ap-southeast-1 --query Parameter.Value --output text
-
-$resp = Invoke-WebRequest -Uri "$API/trending?limit=3" -Headers @{"x-api-key" = $KEY}
+$URL = aws ssm get-parameter --name /sdlf/pipeline/rDashboardUrl/ott --region ap-southeast-1 --query Parameter.Value --output text
+$resp = Invoke-WebRequest -Uri $URL
 Write-Host "Status:           $($resp.StatusCode)"
-Write-Host "X-Data-Freshness: $($resp.Headers.'X-Data-Freshness')"
 Write-Host "Cache-Control:    $($resp.Headers.'Cache-Control')"
-Write-Host "Top result:"
-($resp.Content | ConvertFrom-Json)[0] | Format-List
+Write-Host "Bytes:            $($resp.RawContentLength)"
+if ($resp.Content -match '(?s)Source: curated.+?(\d+) days.+?(\d[\d,]*) rows') {
+  Write-Host "Window stamp:     $($matches[1]) days, $($matches[2]) rows"
+}
 ```
 
 **Expected** (live):
 
 ```
 Status:           200
-X-Data-Freshness: 2026-05-19T15:41:26+00:00
 Cache-Control:    public, max-age=300
-Top result:
-
-keyword_norm      : nữ thanh tra tài ba
-derived_genre     : PHIM_VIET
-current_cnt       : 4831
-baseline_cnt      : 0
-growth_multiplier : 
-is_new_keyword    : true
+Bytes:            245312
+Window stamp:     23 days, 1,151,234 rows
 ```
 
-If `Status: 200` + a parseable `X-Data-Freshness` timestamp + a non-empty top result come back, your pipeline is end-to-end healthy.
+If `Status: 200` + a parseable source-attribution window stamp comes back, the pipeline is end-to-end healthy.
 
 ---
 

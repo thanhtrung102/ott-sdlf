@@ -1,25 +1,27 @@
 """Post-deploy contract test for the OTT SDLF pipeline.
 
-Asserts the end-user-facing contracts that L4/L5/L6 broke in the past:
+Asserts the end-user-facing contracts that prior incidents broke:
 
-  1. REST API returns JSON arrays for /content-gaps and /trending
-  2. content_gaps top row is a real keyword (non-empty keyword_norm)
-  3. premium_vs_free top row has populated derived_genre + numeric premium_share_pct
-  4. trending top row is NOT EMPTY_QUERY (regression test for N1)
-  5. CloudFront dashboard URL serves HTTP 200 + every section (centralized presentation)
-  6. Athena ad-hoc query on curated WHERE derived_genre = 'X' returns rows
-     (regression test for L3 partition key drift)
+  1. CloudFront dashboard URL serves HTTP 200 with the full single-surface
+     presentation (KPIs + every business-question section).
+  2. Header carries a source-attribution stamp identifying the curated
+     dt window the run aggregated (criterion #1: truthful coverage).
+  3. Content Gaps and Trending tables hold their full-depth row counts
+     (the analytics API used to back the deep-list use case; now the
+     dashboard is the only surface, so the rows must live in HTML).
+  4. Athena ad-hoc query on curated WHERE derived_genre = 'X' returns rows
+     (regression test for L3 partition key drift).
+  5. dq_results visible to the analyst role (regression test for L7).
+  6. raw_search_events.action visible (regression test for L8).
 
-Exit 0 on pass, non-zero on first failure. Designed for CI smoke or manual
-post-deploy verification. Reads no environment beyond AWS creds.
+Exit 0 on pass, non-zero on first failure. Designed for CI smoke or
+manual post-deploy verification.
 """
 import io
-import json
-import os
+import re
 import sys
 import time
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError
+from urllib.request import urlopen
 
 import boto3
 
@@ -28,15 +30,10 @@ import boto3
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 REGION = "ap-southeast-1"
-API_BASE = "https://oygn7qkkr7.execute-api.ap-southeast-1.amazonaws.com"
 DB = "fpt_ott_searchevents_analytics"
 ATHENA_OUTPUT = "s3://fpt-ott-ap-southeast-1-703668403514-athena-prod/contract-test/"
-API_KEY = os.environ.get("OTT_API_KEY", "")
 
-from botocore.config import Config
-# CG Lambda runs 5 sequential Athena queries; budget ~5 min.
-lam = boto3.client("lambda", region_name=REGION,
-                   config=Config(read_timeout=300, retries={"max_attempts": 0}))
+ssm = boto3.client("ssm", region_name=REGION)
 ath = boto3.client("athena", region_name=REGION)
 
 failures: list[str] = []
@@ -50,30 +47,6 @@ def check(label: str, ok: bool, detail: str = "") -> None:
     print(msg)
     if not ok:
         failures.append(label)
-
-
-def http_json(path: str, api_key: str | None = None) -> tuple[list, dict]:
-    """GET API_BASE+path with x-api-key, return (rows, response_headers)."""
-    req = Request(API_BASE + path)
-    if api_key is None:
-        api_key = API_KEY
-    if api_key:
-        req.add_header("x-api-key", api_key)
-    with urlopen(req, timeout=10) as r:
-        body = r.read().decode("utf-8")
-        return json.loads(body), dict(r.headers.items())
-
-
-def http_status(path: str, api_key: str = "") -> int:
-    """GET path with explicit key (or none) and return status; capture HTTPError."""
-    req = Request(API_BASE + path)
-    if api_key:
-        req.add_header("x-api-key", api_key)
-    try:
-        with urlopen(req, timeout=10) as r:
-            return r.status
-    except HTTPError as e:
-        return e.code
 
 
 def athena_one(sql: str) -> list[str]:
@@ -99,67 +72,46 @@ def athena_one(sql: str) -> list[str]:
     return [c.get("VarCharValue", "") for c in rows[1]["Data"]]
 
 
-print("=== Contract: REST API ===")
-if not API_KEY:
-    print("FATAL: set OTT_API_KEY env var (matches pApiKey CFN parameter)")
-    sys.exit(2)
-
-# P0a: missing key → 401
-status = http_status("/trending?limit=1", api_key="")
-check("API rejects request without x-api-key (P0a auth)", status == 401, f"status={status}")
-# P0a: wrong key → 401
-status = http_status("/trending?limit=1", api_key="WRONG_KEY_12345678")
-check("API rejects wrong x-api-key (P0a auth)", status == 401, f"status={status}")
-
-cg, _ = http_json("/content-gaps?limit=3&report=content_gaps")
-check("API /content-gaps returns 3 rows", len(cg) == 3, f"got {len(cg)}")
-check(
-    "API content_gaps top row has non-empty keyword",
-    bool(cg and cg[0].get("keyword_norm", "").strip()),
-    f"top keyword='{cg[0].get('keyword_norm', '')}'" if cg else "no rows",
-)
-
-pf, _ = http_json("/content-gaps?limit=2&report=premium_vs_free")
-check("API /content-gaps?report=premium_vs_free returns 2 rows", len(pf) == 2)
-if pf:
-    pct = pf[0].get("premium_share_pct", "")
-    check("premium_vs_free top has numeric premium_share_pct", bool(pct and pct.replace(".", "").isdigit()), f"pct={pct}")
-
-tr, tr_hdrs = http_json("/trending?limit=3")
-check("API /trending returns 3 rows", len(tr) == 3)
-# P0b: freshness header present and ISO-8601 parseable
-freshness = tr_hdrs.get("X-Data-Freshness", "") or tr_hdrs.get("x-data-freshness", "")
-check("API exposes X-Data-Freshness header (P0b)", bool(freshness) and "T" in freshness, f"X-Data-Freshness='{freshness}'")
-check("API exposes Last-Modified header (P0b)", bool(tr_hdrs.get("Last-Modified") or tr_hdrs.get("last-modified")), f"Last-Modified='{tr_hdrs.get('Last-Modified', tr_hdrs.get('last-modified', ''))}'")
-if tr:
-    check(
-        "trending top row is NOT EMPTY_QUERY (N1 regression)",
-        tr[0].get("derived_genre") != "EMPTY_QUERY" and tr[0].get("keyword_norm", "").strip(),
-        f"top kw='{tr[0].get('keyword_norm', '')}' genre={tr[0].get('derived_genre')}",
-    )
-
-print()
-print("=== Contract: Centralized CloudFront dashboard ===")
-# The Content-Gap Lambda no longer renders its own HTML report — the single
-# stakeholder-facing presentation surface is the CloudFront dashboard, written
-# by the Trending Lambda on every pipeline run. Resolve its URL from SSM and
-# verify the page is live, non-trivial, and contains every section.
-ssm = boto3.client("ssm", region_name=REGION)
+print("=== Contract: CloudFront dashboard (single user-facing surface) ===")
 dash_url = ssm.get_parameter(Name="/sdlf/pipeline/rDashboardUrl/ott")["Parameter"]["Value"]
 check("Dashboard URL is published to SSM", dash_url.startswith("https://"), f"url={dash_url}")
-with urlopen(dash_url, timeout=10) as r:
+with urlopen(dash_url, timeout=15) as r:
     body = r.read().decode("utf-8", errors="replace")
 check(
     "Dashboard returns HTTP 200 + non-trivial HTML",
-    r.status == 200 and len(body) > 5000 and "<!DOCTYPE html" in body,
+    r.status == 200 and len(body) > 8000 and "<!DOCTYPE html" in body,
     f"status={r.status} bytes={len(body)}",
 )
+# Single user-facing surface: every section must be present in the HTML, not
+# offloaded to a JSON API.
 for section in (
     "Total Searches", "Distinct Keywords", "Top 20 Keywords",
     "Trending Keywords", "Content Gaps", "Premium vs Free",
-    "Repeat Search Rate", "Guest vs Authenticated", "Search Volume by Hour",
+    "Repeat Search Rate", "Guest vs Authenticated",
+    "Search Volume by Hour",
 ):
     check(f"Dashboard section present: {section}", section in body)
+
+# Source-attribution stamp on every section (criterion: truthful coverage).
+check("Header carries source-attribution caption",
+      "Source: curated" in body and "days" in body)
+# Section-level captions must also carry the dt window.
+src_count = len(re.findall(r'class="src"', body))
+check(f"Every section header has its own .src caption (>=9)",
+      src_count >= 9, f"found={src_count}")
+
+# Depth requirement — Content Gaps and Trending must hold full-depth lists in
+# the HTML (the API previously served them; now they live here).
+cg_rows = len(re.findall(r'<tr data-genre="[^"]+" data-kw="', body))
+check(f"Filterable tables (Trending + Content Gaps) carry deep rows",
+      cg_rows >= 100, f"data-kw tr count={cg_rows}")
+
+# Hour×genre heatmap — 216 cells (24 hours × 9 genres) + an "All genres"
+# totals row contribute 24 cells with the `hcell` class per row. A simple
+# bar-chart-only version would have at most ~24 hcells.
+hcell_count = body.count('class="hcell"')
+check(f"Hour×genre heatmap rendered (>=200 cells)",
+      hcell_count >= 200, f"hcell count={hcell_count}")
 
 print()
 print("=== Contract: Athena catalog ===")
@@ -183,6 +135,24 @@ row = athena_one(
     f"SELECT DISTINCT action FROM {DB}.raw_search_events WHERE dt = '20220601' LIMIT 1"
 )
 check("Athena: raw_search_events.action visible (L8 regression)", row == ["search"], f"row={row}")
+
+# N1 regression: trending top row should be a real keyword, not EMPTY_QUERY.
+# Source from the dashboard's trending section directly.
+m = re.search(r'<tbody id="trBody">(.+?)</tbody>', body, re.S)
+if m:
+    first_tr = re.search(r'<tr data-genre="([^"]*)" data-kw="([^"]*)"', m.group(1))
+    if first_tr:
+        check(
+            "Dashboard trending top row is NOT EMPTY_QUERY (N1 regression)",
+            first_tr.group(1) != "EMPTY_QUERY" and bool(first_tr.group(2).strip()),
+            f"top kw='{first_tr.group(2)}' genre={first_tr.group(1)}",
+        )
+    else:
+        check("Dashboard trending top row is NOT EMPTY_QUERY (N1 regression)", False,
+              "no trending rows found")
+else:
+    check("Dashboard trending top row is NOT EMPTY_QUERY (N1 regression)", False,
+          "trending tbody missing")
 
 print()
 if failures:

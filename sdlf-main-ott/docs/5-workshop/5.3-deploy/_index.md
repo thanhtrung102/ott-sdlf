@@ -21,7 +21,7 @@ This chapter walks path A. Path B is at section 5.3.9 for the bootstrap / iterat
 
 ## 5.3.1 What gets deployed
 
-Eleven CloudFormation stacks, in dependency order:
+Nine CloudFormation stacks, in dependency order:
 
 ```
 1.  sdlf-ott-searchevents-glue-job   — Glue job + IAM role + raw/curated catalog tables
@@ -29,13 +29,13 @@ Eleven CloudFormation stacks, in dependency order:
 3.  sdlf-pipeline-ott-mainB          — Stage B state machine (Glue orchestration)
 4.  sdlf-pipeline-ott-dataquality    — Curated-layer DQ state machine
 5.  sdlf-pipeline-ott-lutrefresh     — LUT-Refresh Lambda + DLQ + EventBridge rule
-6.  sdlf-pipeline-ott-contentgap     — Content-Gap Lambda + 5 catalog tables + DLQ
-7.  sdlf-pipeline-ott-trending       — Trending Lambda + trending_all/unknown catalog + DLQ
-8.  sdlf-pipeline-ott-monitoring     — CloudWatch dashboard + 16 alarms
-9.  sdlf-pipeline-ott-lakeformation  — Column-level RBAC on curated
-10. sdlf-pipeline-ott-api            — HTTP API (x-api-key, freshness headers, arm64)
-11. sdlf-pipeline-ott-dashboard      — S3 + CloudFront hosting for the search-analytics dashboard
+6.  sdlf-pipeline-ott-trending       — Dashboard renderer (Trending Lambda) + DLQ
+7.  sdlf-pipeline-ott-monitoring     — CloudWatch dashboard + 11 alarms
+8.  sdlf-pipeline-ott-lakeformation  — Column-level RBAC on curated
+9.  sdlf-pipeline-ott-dashboard      — S3 + CloudFront hosting for the search-analytics dashboard
 ```
+
+The analytics HTTP API and the standalone content-gap Lambda were retired in favour of dashboard-with-full-depth: the dashboard renderer (formerly Trending Lambda) now executes every section query at full depth and the CloudFront dashboard is the single user-facing surface.
 
 The deploy path handles artifact staging, stack ordering, and parameter wiring automatically.
 
@@ -54,7 +54,7 @@ That's it. The CodePipeline picks up the push within ~30 seconds and runs four s
 Source   → CodeStar connection pulls the commit
 Validate → CodeBuild runs cfn-lint on every pipeline-ott-*.yaml
 Deploy   → CodeBuild stages the Glue script + Lambda zips to S3, runs
-           `aws cloudformation deploy` for each of 11 stacks, then pushes live Lambda code
+           `aws cloudformation deploy` for each of 9 stacks, then pushes live Lambda code
 Notify   → Lambda publishes the success/failure summary to SNS
 ```
 
@@ -124,7 +124,7 @@ aws codepipeline get-pipeline-state --name sdlf-ott-cicd --region ap-southeast-1
 
 ## 5.3.5 Activate Lake Formation column-level RBAC
 
-`pipeline-ott-lakeformation.yaml` declares 7 `AWS::LakeFormation::PrincipalPermissions` resources with `TableWithColumns` ColumnWildcards. CloudFormation will report all 7 as `CREATE_COMPLETE`, but **the underlying LF grants will not land** until `IAM_ALLOWED_PRINCIPALS` is revoked. CFN reports success because the resource creation API call succeeded; the column-level grant collapses to a no-op silently. Result: 0 `TABLE_WITH_COLUMNS` grants visible via `ListPermissions` after the deploy.
+`pipeline-ott-lakeformation.yaml` declares 5 `AWS::LakeFormation::PrincipalPermissions` resources with `TableWithColumns` ColumnWildcards. CloudFormation will report all 5 as `CREATE_COMPLETE`, but **the underlying LF grants will not land** until `IAM_ALLOWED_PRINCIPALS` is revoked. CFN reports success because the resource creation API call succeeded; the column-level grant collapses to a no-op silently. Result: 0 `TABLE_WITH_COLUMNS` grants visible via `ListPermissions` after the deploy.
 
 Activation is therefore a 2-script step that runs *after* `5.3.2`:
 
@@ -134,18 +134,17 @@ Activation is therefore a 2-script step that runs *after* `5.3.2`:
 python D:\ott-sdlf\scripts\lf_grants.py --apply
 ```
 
-**Step 2 — grant the 7 OTT pipeline roles imperatively + revoke `IAM_ALLOWED_PRINCIPALS`.** `activate_lakeformation.py` works around the CFN no-op by calling `lakeformation:GrantPermissions` directly for each ott-main\* role with the exact column exclusions declared in `pipeline-ott-lakeformation.yaml`, then revokes `IAM_ALLOWED_PRINCIPALS` to turn on enforcement.
+**Step 2 — grant the OTT pipeline roles imperatively + revoke `IAM_ALLOWED_PRINCIPALS`.** `activate_lakeformation.py` works around the CFN no-op by calling `lakeformation:GrantPermissions` directly for each ott-main\* role with the exact column exclusions declared in `pipeline-ott-lakeformation.yaml`, then revokes `IAM_ALLOWED_PRINCIPALS` to turn on enforcement.
 
 ```powershell
 python D:\ott-sdlf\scripts\activate_lakeformation.py            # dry-run, prints what it would do
 python D:\ott-sdlf\scripts\activate_lakeformation.py --apply    # commits
 ```
 
-**Expected output** (live 2026-05-20, `--apply` mode):
+**Expected output** (`--apply` mode):
 
 ```
 Step 1: Grant ott-main* roles with column exclusions
-  OK      ContentGap    ->  excludes ['user_id_hashed', 'search_session_id', 'subscription_count']
   OK      LutRefresh    ->  excludes ['user_id_hashed', 'search_session_id', 'has_premium', 'subscription_count']
   OK      Trending      ->  all columns
   OK      DQExec        ->  all columns
@@ -160,7 +159,7 @@ Step 4: Revoke IAM_ALLOWED_PRINCIPALS to activate enforcement
   OK      IAM_ALLOWED_PRINCIPALS  ->  ALL  (revoked)
 
 === Post-state verification ===
-  TableWithColumns grants now visible: 7
+  TableWithColumns grants now visible: 5
 ```
 
 > ⚠️ **WARNING:** Once `IAM_ALLOWED_PRINCIPALS` is revoked, only principals explicitly granted in step 1 + step 2 can read `curated`. Any role outside that set loses access.
@@ -171,7 +170,7 @@ Step 4: Revoke IAM_ALLOWED_PRINCIPALS to activate enforcement
 python D:\ott-sdlf\scripts\verify_monitoring_and_lf.py
 ```
 
-**Expected**: `L2 IAM_ALLOWED_PRINCIPALS revoked  (column-level RBAC is ACTIVELY ENFORCED)` and 6 × `L3 ... grant matches template` lines.
+**Expected**: `L2 IAM_ALLOWED_PRINCIPALS revoked  (column-level RBAC is ACTIVELY ENFORCED)` and 5 × `L3 ... grant matches template` lines.
 
 > The CFN approach alone (without `activate_lakeformation.py`) leaves you in the worst of both worlds: `IAM_ALLOWED_PRINCIPALS` not revoked + 0 actual column grants. The Lambdas keep working only via the bypass — and pulling that bypass would lock every Lambda out. The activate script fixes both at once.
 
@@ -179,7 +178,7 @@ python D:\ott-sdlf\scripts\verify_monitoring_and_lf.py
 
 ## 5.3.6 Subscribe to the alarm SNS topic
 
-The 16 CloudWatch alarms deployed by `pipeline-ott-monitoring.yaml` publish to the SNS topic at `/SDLF/SNS/ott/Notifications`. The topic exists, but a fresh deployment has **0 subscribers** — alarms will fire silently. Add an endpoint:
+The 11 CloudWatch alarms deployed by `pipeline-ott-monitoring.yaml` publish to the SNS topic at `/SDLF/SNS/ott/Notifications`. The topic exists, but a fresh deployment has **0 subscribers** — alarms will fire silently. Add an endpoint:
 
 ```powershell
 $TOPIC = aws ssm get-parameter --name /SDLF/SNS/ott/Notifications --region ap-southeast-1 --query Parameter.Value --output text
@@ -209,12 +208,10 @@ aws cloudformation list-stacks --region ap-southeast-1 `
   --output text
 ```
 
-**Expected** — 11 top-level OTT stacks + 4 SDLF MODULE nested stacks (created automatically by the Stage A/B MODULE constructs; do not deploy them directly):
+**Expected** — 9 top-level OTT stacks + 4 SDLF MODULE nested stacks (created automatically by the Stage A/B MODULE constructs; do not deploy them directly):
 
 ```
 sdlf-ott-searchevents-glue-job
-sdlf-pipeline-ott-api
-sdlf-pipeline-ott-contentgap
 sdlf-pipeline-ott-dashboard
 sdlf-pipeline-ott-dataquality
 sdlf-pipeline-ott-lakeformation
@@ -229,19 +226,19 @@ sdlf-pipeline-ott-monitoring
 sdlf-pipeline-ott-trending
 ```
 
-15 names total.
+13 names total.
 
 ---
 
 ## 5.3.8 Read the live state — what the deploy gave you
 
 ```powershell
-# API base URL (you'll use it in chapter 5.5)
-aws ssm get-parameter --name /sdlf/pipeline/rApiUrl/ott --region ap-southeast-1 --query Parameter.Value --output text
-# Live example: https://oygn7qkkr7.execute-api.ap-southeast-1.amazonaws.com
-# Your api-id will differ; the rApiUrl SSM parameter is the source of truth.
+# CloudFront dashboard URL — the single user-facing surface (you'll open it in 5.5)
+aws ssm get-parameter --name /sdlf/pipeline/rDashboardUrl/ott --region ap-southeast-1 --query Parameter.Value --output text
+# Live example: https://d3bdq70ai5wf18.cloudfront.net
+# Your distribution id will differ; the rDashboardUrl SSM parameter is the source of truth.
 
-# CloudWatch dashboard
+# CloudWatch operational dashboard
 Write-Host "Dashboard: https://ap-southeast-1.console.aws.amazon.com/cloudwatch/home?region=ap-southeast-1#dashboards:name=sdlf-ott-searchevents-pipeline"
 
 # Glue job name
@@ -268,14 +265,12 @@ Time: ~15 min for first deploy; ~5 min for subsequent runs (no-op CFN updates).
 === Deploy stacks ===
   uploading Glue script to s3://ott-search-...-prod/ott/searchevents/ ...
   packaging analytics Lambdas to s3://...-artifacts-prod/lambda/ ...
-[contentgap] uploaded ... (3988 bytes)
-[trending]   uploaded ... (4964 bytes)
+[trending]   uploaded ... (12000+ bytes)
 [lutrefresh] uploaded ... (3263 bytes)
-[api]        uploaded ... (1532 bytes)
   deploying sdlf-ott-searchevents-glue-job ... OK
   deploying sdlf-pipeline-ott-mainA ........ OK
-  ... (all 11 stacks)
-  [OK]   All 11 stacks deployed
+  ... (all 9 stacks)
+  [OK]   All 9 stacks deployed
 ```
 
 `ott-pipeline.ps1` does what the CI/CD buildspec does, plus ingests one raw file and runs the analytics Lambdas — useful for end-to-end iteration in one command. Both paths stage the same artifacts and deploy identical CloudFormation.

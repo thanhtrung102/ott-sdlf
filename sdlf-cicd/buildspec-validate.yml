@@ -17,11 +17,10 @@ phases:
           sdlf-main-ott/pipeline-ott-mainB.yaml \
           sdlf-main-ott/pipeline-ott-dq-stage.yaml \
           sdlf-main-ott/pipeline-ott-lutrefresh.yaml \
-          sdlf-main-ott/pipeline-ott-contentgap.yaml \
           sdlf-main-ott/pipeline-ott-trending.yaml \
           sdlf-main-ott/pipeline-ott-monitoring.yaml \
           sdlf-main-ott/pipeline-ott-lakeformation.yaml \
-          sdlf-main-ott/pipeline-ott-api.yaml \
+          sdlf-main-ott/pipeline-ott-dashboard.yaml \
           sdlf-cicd/template-cicd.yaml \
           --ignore-checks W3002 W3037 \
           --format parseable
@@ -33,11 +32,10 @@ phases:
           sdlf-main-ott/pipeline-ott-mainB.yaml \
           sdlf-main-ott/pipeline-ott-dq-stage.yaml \
           sdlf-main-ott/pipeline-ott-lutrefresh.yaml \
-          sdlf-main-ott/pipeline-ott-contentgap.yaml \
           sdlf-main-ott/pipeline-ott-trending.yaml \
           sdlf-main-ott/pipeline-ott-monitoring.yaml \
           sdlf-main-ott/pipeline-ott-lakeformation.yaml \
-          sdlf-main-ott/pipeline-ott-api.yaml; do
+          sdlf-main-ott/pipeline-ott-dashboard.yaml; do
           echo "Validating $template..."
           aws cloudformation validate-template \
             --template-body file://$template \

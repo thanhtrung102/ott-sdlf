@@ -1,10 +1,13 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  OTT Trending Keywords — compares current-week search volumes against the same
-  week four weeks prior to surface high-growth keywords after every DQ SM success.
-  Writes trending_all.csv (all genres) and trending_unknown.csv (LUT priority
-  targets) to the stage bucket. Degrades gracefully to volume-only when less than
-  four weeks of pipeline data exists.
+  OTT Dashboard Renderer — runs the trending Athena query plus every
+  dashboard section query (genre, platform, content gaps at full 500-row
+  depth, premium/free, repeat-search, guest/auth, hour×genre heatmap)
+  after the Data Quality SM succeeds, and publishes the rendered
+  index.html to the CloudFront-fronted dashboard bucket.
+  This is the single user-facing presentation surface; the analytics
+  HTTP API and the content-gap Lambda were retired in favour of
+  dashboard-with-full-depth.
   Source: lambda/trending/src/lambda_function.py
 
 Parameters:
@@ -23,6 +26,10 @@ Parameters:
   pSnsTopicArn:
     Type: AWS::SSM::Parameter::Value<String>
     Default: /SDLF/SNS/ott/Notifications
+  pDashboardUrl:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /sdlf/pipeline/rDashboardUrl/ott
+    Description: CloudFront URL of the centralized dashboard; included in the SNS notification body
   pMinGrowthMultiplier:
     Type: Number
     Default: 3
@@ -33,7 +40,7 @@ Parameters:
     Description: Minimum searches in current window to filter noise
   pMaxTrendingRows:
     Type: Number
-    Default: 1000
+    Default: 500
     Description: Hard cap on rows returned by the trending Athena query (LIMIT clause)
   pKmsKeyArn:
     Type: AWS::SSM::Parameter::Value<String>
@@ -81,13 +88,14 @@ Resources:
                 Resource:
                   - !Sub arn:${AWS::Partition}:s3:::${pStageBucket}
                   - !Sub arn:${AWS::Partition}:s3:::${pAthenaResultsBucket}
+              # Athena query-result staging only — the Lambda no longer writes
+              # CSV reports. Stage A/B own the analytics/* prefixes.
               - Effect: Allow
                 Action:
                   - s3:GetObject
                   - s3:PutObject
                 Resource:
                   - !Sub arn:${AWS::Partition}:s3:::${pStageBucket}/athena-results/trending/*
-                  - !Sub arn:${AWS::Partition}:s3:::${pStageBucket}/analytics/trending/*
                   - !Sub arn:${AWS::Partition}:s3:::${pAthenaResultsBucket}/*
               - Effect: Allow
                 Action:
@@ -188,8 +196,11 @@ Resources:
       Runtime: python3.12
       Handler: index.lambda_handler
       Role: !GetAtt rTrendingRole.Arn
-      Timeout: 300
-      MemorySize: 256
+      # 9 concurrent Athena queries + full-depth HTML render. Wall-clock is
+      # bounded by the slowest query (~30-60s); 600s gives us headroom against
+      # Athena queue pressure.
+      Timeout: 600
+      MemorySize: 512
       TracingConfig:
         Mode: Active
       Layers:
@@ -198,9 +209,8 @@ Resources:
         Variables:
           ATHENA_DATABASE: !Ref pDatabaseName
           ATHENA_RESULTS: !Sub s3://${pStageBucket}/athena-results/trending/
-          STAGE_BUCKET: !Ref pStageBucket
-          ANALYTICS_PREFIX: analytics/trending/
           SNS_TOPIC_ARN: !Ref pSnsTopicArn
+          DASHBOARD_URL: !Ref pDashboardUrl
           MIN_GROWTH_MULTIPLIER: !Sub "${pMinGrowthMultiplier}"
           MIN_SEARCH_VOLUME: !Sub "${pMinSearchVolume}"
           MAX_TRENDING_ROWS: !Sub "${pMaxTrendingRows}"
@@ -208,7 +218,7 @@ Resources:
           ATHENA_WORKGROUP: sdlf-ott
           TEAM: ott
           PIPELINE: main
-          PIPELINE_STAGE: Trending
+          PIPELINE_STAGE: Dashboard
       Code:
         S3Bucket: "{{resolve:ssm:/sdlf/storage/rArtifactsBucket/prod}}"
         S3Key: lambda/trending.zip
@@ -236,7 +246,7 @@ Resources:
     Type: AWS::Events::Rule
     Properties:
       Name: sdlf-ott-mainTR-trigger
-      Description: Start Trending Lambda when DQ SM succeeds
+      Description: Start Dashboard renderer when DQ SM succeeds
       EventPattern: !Sub
         - '{"source":["aws.states"],"detail-type":["Step Functions Execution Status Change"],"detail":{"status":["SUCCEEDED"],"stateMachineArn":["${DQSmArn}"]}}'
         - DQSmArn: !Ref pDQSmArn
@@ -260,7 +270,7 @@ Resources:
       Name: /sdlf/pipeline/rLambda/ott-mainTR
       Type: String
       Value: !GetAtt rTrendingFunction.Arn
-      Description: ARN of the OTT Trending Keywords Lambda
+      Description: ARN of the OTT Dashboard renderer Lambda
 
   rTrendingRoleSsm:
     Type: AWS::SSM::Parameter
@@ -268,106 +278,14 @@ Resources:
       Name: /sdlf/pipeline/rRole/ott-mainTR
       Type: String
       Value: !GetAtt rTrendingRole.Arn
-      Description: IAM role ARN for the OTT Trending Lambda (used by LF stack)
-
-  ######## GLUE CATALOG ########
-
-  rTrendingAllTable:
-    Type: AWS::Glue::Table
-    Properties:
-      CatalogId: !Ref AWS::AccountId
-      DatabaseName: !Ref pDatabaseName
-      TableInput:
-        Name: trending_all
-        Description: Trending keywords (all genres) — date-partitioned CSV from Trending Lambda
-        TableType: EXTERNAL_TABLE
-        Parameters:
-          classification: csv
-          skip.header.line.count: "1"
-          projection.enabled: "true"
-          projection.dt.type: date
-          projection.dt.format: yyyy-MM-dd
-          projection.dt.range: "2022-01-01,NOW+1YEARS"
-          projection.dt.interval: "1"
-          projection.dt.interval.unit: DAYS
-          storage.location.template: !Sub s3://${pStageBucket}/analytics/trending/all/${!dt}/
-        StorageDescriptor:
-          Location: !Sub s3://${pStageBucket}/analytics/trending/all/
-          InputFormat: org.apache.hadoop.mapred.TextInputFormat
-          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
-          SerdeInfo:
-            SerializationLibrary: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
-            Parameters:
-              field.delim: ","
-              serialization.format: ","
-          Columns:
-            - Name: keyword_norm
-              Type: string
-            - Name: derived_genre
-              Type: string
-            - Name: current_cnt
-              Type: bigint
-            - Name: baseline_cnt
-              Type: bigint
-            - Name: growth_multiplier
-              Type: double
-            - Name: is_new_keyword
-              Type: boolean
-        PartitionKeys:
-          - Name: dt
-            Type: date
-
-  rTrendingUnknownTable:
-    Type: AWS::Glue::Table
-    Properties:
-      CatalogId: !Ref AWS::AccountId
-      DatabaseName: !Ref pDatabaseName
-      TableInput:
-        Name: trending_unknown
-        Description: Trending UNKNOWN-genre keywords — LUT refresh priority targets
-        TableType: EXTERNAL_TABLE
-        Parameters:
-          classification: csv
-          skip.header.line.count: "1"
-          projection.enabled: "true"
-          projection.dt.type: date
-          projection.dt.format: yyyy-MM-dd
-          projection.dt.range: "2022-01-01,NOW+1YEARS"
-          projection.dt.interval: "1"
-          projection.dt.interval.unit: DAYS
-          storage.location.template: !Sub s3://${pStageBucket}/analytics/trending/unknown/${!dt}/
-        StorageDescriptor:
-          Location: !Sub s3://${pStageBucket}/analytics/trending/unknown/
-          InputFormat: org.apache.hadoop.mapred.TextInputFormat
-          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
-          SerdeInfo:
-            SerializationLibrary: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
-            Parameters:
-              field.delim: ","
-              serialization.format: ","
-          Columns:
-            - Name: keyword_norm
-              Type: string
-            - Name: derived_genre
-              Type: string
-            - Name: current_cnt
-              Type: bigint
-            - Name: baseline_cnt
-              Type: bigint
-            - Name: growth_multiplier
-              Type: double
-            - Name: is_new_keyword
-              Type: boolean
-        PartitionKeys:
-          - Name: dt
-            Type: date
+      Description: IAM role ARN for the OTT Dashboard renderer Lambda (used by LF stack)
 
 Outputs:
   oPipelineReference:
     Description: CodePipeline reference this stack has been deployed with
     Value: !Ref pPipelineReference
   oTrendingFunctionArn:
-    Description: ARN of the Trending Keywords Lambda
+    Description: ARN of the OTT Dashboard renderer Lambda
     Value: !GetAtt rTrendingFunction.Arn
   oTriggerRuleArn:
     Description: EventBridge rule ARN
