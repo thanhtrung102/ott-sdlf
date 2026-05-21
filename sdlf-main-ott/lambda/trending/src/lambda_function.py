@@ -3,7 +3,7 @@ import io
 import json
 import os
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import boto3
 from datalake_library.commons import init_logger
@@ -306,7 +306,7 @@ def _ctas(table_name, location):
 
 
 def write_gold_table():
-    gold_db          = os.environ.get("GOLD_DATABASE", "sdlf_ott_gold")
+    gold_db          = os.environ.get("GOLD_DATABASE", "fpt_ott_searchevents_gold")
     gold_location    = os.environ.get("GOLD_LOCATION", "")
     if not gold_location:
         logger.warning("GOLD_LOCATION not set — skipping gold table write")
@@ -348,6 +348,316 @@ def write_gold_table():
 
     logger.info(f"Gold table written: {count} rows")
     return count
+
+
+def _render_dashboard_html(totals, platform, genre, keywords):
+    """Render the OTT search-analytics dashboard from curated-layer aggregates.
+
+    Every figure is population-true — sourced from the unfiltered curated
+    table, not the volume-thresholded gold table. Gold (keyword_trends) keeps
+    its own job: the trending-ranking product behind GET /trending.
+    """
+    total_searches  = int(totals.get("total", 0) or 0)
+    distinct_kw     = int(totals.get("kw", 0) or 0)
+    overall_abandon = float(totals.get("abandon", 0) or 0)
+    max_dt          = totals.get("max_dt", "") or ""
+    month_label = "unknown"
+    if max_dt:
+        try:
+            month_label = date.fromisoformat(max_dt).strftime("%b %Y")
+        except ValueError:
+            pass
+
+    plat = [{"p": r["platform_group"], "c": int(r["c"]), "a": float(r["a"] or 0)}
+            for r in platform if r.get("platform_group")]
+    byg  = [{"g": r["derived_genre"], "c": int(r["c"]), "a": float(r["a"] or 0)}
+            for r in genre if r.get("derived_genre")]
+    topk = [{"k": r["keyword_norm"], "g": r["derived_genre"],
+             "c": int(r["c"]), "a": float(r["a"] or 0)} for r in keywords]
+    top_genre = byg[0] if byg else {"g": "-", "c": 0, "a": 0.0}
+    generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    def fmt_k(n):
+        if n >= 1_000_000:
+            return f"{n / 1_000_000:.2f}M"
+        if n >= 1_000:
+            return f"{n / 1_000:.0f}K"
+        return str(n)
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FPT OTT Search Analytics</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1117; color: #e2e8f0; min-height: 100vh; }}
+  header {{ background: #1a1d27; border-bottom: 1px solid #2d3748; padding: 16px 32px; display: flex; align-items: center; gap: 12px; }}
+  header h1 {{ font-size: 18px; font-weight: 600; color: #f7fafc; }}
+  .badge {{ background: #2d3748; color: #68d391; font-size: 11px; padding: 2px 8px; border-radius: 9999px; border: 1px solid #276749; }}
+  .source-tag {{ font-size: 11px; color: #718096; margin-left: auto; }}
+  main {{ padding: 24px 32px; max-width: 1400px; margin: 0 auto; }}
+  .kpis {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }}
+  .kpi {{ background: #1a1d27; border: 1px solid #2d3748; border-radius: 10px; padding: 20px; }}
+  .kpi .label {{ font-size: 12px; color: #718096; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; }}
+  .kpi .value {{ font-size: 28px; font-weight: 700; color: #f7fafc; }}
+  .kpi .sub {{ font-size: 12px; color: #68d391; margin-top: 4px; }}
+  .kpi .sub.warn {{ color: #f6ad55; }}
+  .grid-2 {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }}
+  .grid-3 {{ display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 24px; }}
+  .card {{ background: #1a1d27; border: 1px solid #2d3748; border-radius: 10px; padding: 20px; }}
+  .card h2 {{ font-size: 14px; font-weight: 600; color: #a0aec0; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }}
+  .card .src {{ font-size: 11px; color: #4a5568; margin-bottom: 14px; font-family: monospace; }}
+  .chart-wrap {{ position: relative; height: 260px; }}
+  .chart-wrap-sm {{ position: relative; height: 200px; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+  thead th {{ text-align: left; color: #718096; font-weight: 500; padding: 6px 10px; border-bottom: 1px solid #2d3748; font-size: 11px; text-transform: uppercase; }}
+  tbody tr:hover {{ background: rgba(255,255,255,0.03); }}
+  tbody td {{ padding: 7px 10px; border-bottom: 1px solid #1e2130; }}
+  .rank {{ color: #4a5568; width: 24px; text-align: right; padding-right: 12px; }}
+  .genre-pill {{ display: inline-block; padding: 1px 7px; border-radius: 9999px; font-size: 10px; font-weight: 500; }}
+  .bar-cell {{ width: 70px; }}
+  .mini-bar {{ height: 5px; border-radius: 3px; background: #2d3748; overflow: hidden; }}
+  .mini-bar-fill {{ height: 100%; border-radius: 3px; }}
+  footer {{ text-align: center; color: #4a5568; font-size: 11px; padding: 24px; border-top: 1px solid #1e2130; margin-top: 8px; }}
+</style>
+</head>
+<body>
+<header>
+  <h1>FPT OTT &mdash; Search Analytics</h1>
+  <span class="badge">fpt_ott_searchevents_analytics.curated</span>
+  <span class="source-tag">{month_label} &nbsp;|&nbsp; {distinct_kw:,} keywords &nbsp;|&nbsp; {len(plat)} platforms &nbsp;|&nbsp; generated {generated}</span>
+</header>
+<main>
+
+<div class="kpis">
+  <div class="kpi">
+    <div class="label">Total Searches</div>
+    <div class="value">{fmt_k(total_searches)}</div>
+    <div class="sub">all curated search events</div>
+  </div>
+  <div class="kpi">
+    <div class="label">Distinct Keywords</div>
+    <div class="value">{distinct_kw:,}</div>
+    <div class="sub">unique keyword_norm in curated</div>
+  </div>
+  <div class="kpi">
+    <div class="label">Overall Abandon Rate</div>
+    <div class="value">{overall_abandon}%</div>
+    <div class="sub">curated weighted average</div>
+  </div>
+  <div class="kpi">
+    <div class="label">Top Genre</div>
+    <div class="value">{top_genre['g']}</div>
+    <div class="sub warn">{top_genre['c']:,} searches &bull; {top_genre['a']}% abandon</div>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <h2>Searches by Platform</h2>
+    <div class="src">fpt_ott_searchevents_analytics.curated &mdash; GROUP BY platform_group</div>
+    <div class="chart-wrap"><canvas id="platformChart"></canvas></div>
+  </div>
+  <div class="card">
+    <h2>Genre Distribution</h2>
+    <div class="src">fpt_ott_searchevents_analytics.curated &mdash; GROUP BY derived_genre</div>
+    <div class="chart-wrap-sm"><canvas id="genreChart"></canvas></div>
+    <div style="margin-top:12px">
+      <table>
+        <thead><tr><th>Genre</th><th>Searches</th><th>Abandon%</th></tr></thead>
+        <tbody id="genreTable"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="grid-3">
+  <div class="card">
+    <h2>Top 20 Keywords by Volume</h2>
+    <div class="src">fpt_ott_searchevents_analytics.curated &mdash; COUNT(*) by keyword_norm</div>
+    <table>
+      <thead><tr>
+        <th class="rank">#</th><th>Keyword</th><th>Genre</th>
+        <th>Searches</th><th>Abandon%</th><th class="bar-cell"></th>
+      </tr></thead>
+      <tbody id="keywordsTable"></tbody>
+    </table>
+  </div>
+  <div class="card">
+    <h2>Platform Abandon Rates</h2>
+    <div class="src">fpt_ott_searchevents_analytics.curated &mdash; abandon_rate by platform</div>
+    <div class="chart-wrap" style="height:280px"><canvas id="abandonChart"></canvas></div>
+  </div>
+</div>
+
+</main>
+<footer>
+  Source: <code>fpt_ott_searchevents_analytics.curated</code> ({total_searches:,} search events) &nbsp;&bull;&nbsp;
+  Produced by: <code>sdlf-ott-mainTR-report</code> Lambda (write_dashboard) &nbsp;&bull;&nbsp;
+  Hosted: S3 + CloudFront (sdlf-pipeline-ott-dashboard) &nbsp;&bull;&nbsp;
+  Generated: {generated}
+</footer>
+
+<script>
+const GENRE_COLORS = {{
+  PHIM_VIET:'#68d391', ANIME:'#9f7aea', PHIM_TRUNG:'#f6ad55',
+  PHIM_HAN:'#76e4f7', PHIM_AU_MY:'#fc8181', TRUYEN_HINH:'#fbd38d',
+  UNKNOWN:'#4a5568', NHAC:'#b794f4', THE_THAO:'#4299e1', EMPTY_QUERY:'#718096',
+}};
+const GENRE_LABELS = {{
+  PHIM_VIET:'Phim Viet', UNKNOWN:'Unknown', PHIM_TRUNG:'Phim Trung',
+  ANIME:'Anime', PHIM_HAN:'Phim Han', PHIM_AU_MY:'Phim Au My',
+  TRUYEN_HINH:'Truyen Hinh', NHAC:'Nhac', THE_THAO:'The Thao', EMPTY_QUERY:'(empty)',
+}};
+Chart.defaults.color = '#a0aec0';
+Chart.defaults.font = {{ family: "'Segoe UI', sans-serif", size: 12 }};
+
+const platform = {json.dumps(plat, ensure_ascii=False)};
+const byGenre = {json.dumps(byg, ensure_ascii=False)};
+const topKeywords = {json.dumps(topk, ensure_ascii=False)};
+
+const fmt = n => n >= 1e6 ? (n/1e6).toFixed(2)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'K' : n;
+
+new Chart(document.getElementById('platformChart'), {{
+  type: 'bar',
+  data: {{
+    labels: platform.map(p => p.p),
+    datasets: [{{
+      label: 'Searches', data: platform.map(p => p.c),
+      backgroundColor: ['#4299e1','#9f7aea','#68d391','#f6ad55','#fc8181','#fbd38d'],
+      borderRadius: 4,
+    }}]
+  }},
+  options: {{
+    responsive: true, maintainAspectRatio: false,
+    plugins: {{
+      legend: {{ display: false }},
+      tooltip: {{ callbacks: {{ afterLabel: ctx => `Abandon: ${{platform[ctx.dataIndex].a}}%` }} }}
+    }},
+    scales: {{
+      x: {{ grid: {{ color: '#2d3748' }} }},
+      y: {{ grid: {{ color: '#2d3748' }}, title: {{ display: true, text: 'Search Count' }} }},
+    }}
+  }}
+}});
+
+new Chart(document.getElementById('genreChart'), {{
+  type: 'doughnut',
+  data: {{
+    labels: byGenre.map(g => GENRE_LABELS[g.g] || g.g),
+    datasets: [{{
+      data: byGenre.map(g => g.c),
+      backgroundColor: byGenre.map(g => GENRE_COLORS[g.g] || '#718096'),
+      borderWidth: 0, hoverOffset: 6
+    }}]
+  }},
+  options: {{
+    responsive: true, maintainAspectRatio: false, cutout: '65%',
+    plugins: {{ legend: {{ position: 'right', labels: {{ boxWidth: 10, padding: 6, font: {{ size: 11 }} }} }} }}
+  }}
+}});
+
+new Chart(document.getElementById('abandonChart'), {{
+  type: 'bar',
+  data: {{
+    labels: platform.map(p => p.p),
+    datasets: [{{
+      label: 'Abandon Rate %', data: platform.map(p => p.a),
+      backgroundColor: platform.map(p => p.a > 10 ? '#fc8181' : p.a > 5 ? '#f6ad55' : '#68d391'),
+      borderRadius: 4,
+    }}]
+  }},
+  options: {{
+    responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+    plugins: {{ legend: {{ display: false }} }},
+    scales: {{
+      x: {{ grid: {{ color: '#2d3748' }}, title: {{ display: true, text: 'Abandon %' }}, max: 20 }},
+      y: {{ grid: {{ display: false }} }},
+    }}
+  }}
+}});
+
+const genreTableEl = document.getElementById('genreTable');
+byGenre.forEach(g => {{
+  const tr = document.createElement('tr');
+  const color = GENRE_COLORS[g.g] || '#718096';
+  tr.innerHTML = `
+    <td><span class="genre-pill" style="background:${{color}}22;color:${{color}};border:1px solid ${{color}}44">${{GENRE_LABELS[g.g]||g.g}}</span></td>
+    <td>${{fmt(g.c)}}</td>
+    <td style="color:${{g.a>10?'#fc8181':g.a>5?'#f6ad55':'#68d391'}}">${{g.a}}%</td>`;
+  genreTableEl.appendChild(tr);
+}});
+
+const maxC = topKeywords[0] ? topKeywords[0].c : 1;
+const kwTableEl = document.getElementById('keywordsTable');
+topKeywords.forEach((kw, i) => {{
+  const barW = Math.round((kw.c / maxC) * 100);
+  const color = kw.a > 20 ? '#fc8181' : kw.a > 10 ? '#f6ad55' : '#68d391';
+  const barColor = kw.a > 20 ? '#fc8181' : kw.a > 10 ? '#f6ad55' : '#4299e1';
+  const tr = document.createElement('tr');
+  const gc = GENRE_COLORS[kw.g] || '#718096';
+  tr.innerHTML = `
+    <td class="rank">${{i+1}}</td>
+    <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{kw.k}}">${{kw.k}}</td>
+    <td><span class="genre-pill" style="background:${{gc}}22;color:${{gc}};border:1px solid ${{gc}}44">${{GENRE_LABELS[kw.g]||kw.g}}</span></td>
+    <td>${{fmt(kw.c)}}</td>
+    <td style="color:${{color}}">${{kw.a}}%</td>
+    <td class="bar-cell"><div class="mini-bar"><div class="mini-bar-fill" style="width:${{barW}}%;background:${{barColor}}"></div></div></td>`;
+  kwTableEl.appendChild(tr);
+}});
+</script>
+</body>
+</html>
+"""
+
+
+def write_dashboard():
+    """Render the search-analytics dashboard from curated and publish to S3.
+
+    Sourced entirely from the unfiltered curated table so every figure is
+    population-true. The dashboard bucket is fronted by CloudFront
+    (sdlf-pipeline-ott-dashboard); writing index.html here refreshes the live
+    dashboard on every pipeline run.
+    """
+    bucket = os.environ.get("DASHBOARD_BUCKET", "")
+    if not bucket:
+        logger.warning("DASHBOARD_BUCKET not set — skipping dashboard write")
+        return 0
+
+    abandon_expr = ("ROUND(100.0 * SUM(CASE WHEN is_search_abandoned THEN 1 ELSE 0 END)"
+                    " / COUNT(*), 1)")
+
+    _, totals = athena_query(
+        f"SELECT COUNT(*) AS total, COUNT(DISTINCT keyword_norm) AS kw, "
+        f"{abandon_expr} AS abandon, MAX(dt) AS max_dt FROM {DB}.curated"
+    )
+    _, platform = athena_query(
+        f"SELECT platform_group, COUNT(*) AS c, {abandon_expr} AS a "
+        f"FROM {DB}.curated GROUP BY platform_group ORDER BY c DESC"
+    )
+    _, genre = athena_query(
+        f"SELECT derived_genre, COUNT(*) AS c, {abandon_expr} AS a "
+        f"FROM {DB}.curated GROUP BY derived_genre ORDER BY c DESC"
+    )
+    _, keywords = athena_query(
+        f"SELECT keyword_norm, derived_genre, COUNT(*) AS c, {abandon_expr} AS a "
+        f"FROM {DB}.curated WHERE keyword_norm IS NOT NULL AND keyword_norm != '' "
+        f"GROUP BY keyword_norm, derived_genre ORDER BY c DESC LIMIT 20"
+    )
+
+    html = _render_dashboard_html(totals[0] if totals else {}, platform, genre, keywords)
+    s3.put_object(
+        Bucket=bucket,
+        Key="index.html",
+        Body=html.encode("utf-8"),
+        ContentType="text/html; charset=utf-8",
+        CacheControl="public, max-age=300",
+    )
+    logger.info(f"Dashboard written -> s3://{bucket}/index.html ({len(html)} bytes)")
+    return len(html)
 
 
 _SUBDIR = {"trending_all": "all", "trending_unknown": "unknown"}
@@ -395,6 +705,13 @@ def lambda_handler(event, context):
     except Exception as e:
         logger.error(f"Gold table write failed: {e}")
         summary["gold_rows"] = -1
+        errors += 1
+
+    try:
+        summary["dashboard_bytes"] = write_dashboard()
+    except Exception as e:
+        logger.error(f"Dashboard write failed: {e}")
+        summary["dashboard_bytes"] = -1
         errors += 1
 
     mode = "fallback/volume-only" if use_fallback else f"growth >={MIN_GROWTH}x"

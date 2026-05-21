@@ -115,37 +115,38 @@ The full output is ~80 lines. Use it whenever you want a quick eyeball check on 
 
 Two paths to view the dashboard.
 
-### Path A: the static gold-table snapshot
+### Path A: the hosted search-analytics dashboard
+
+The dashboard is **deployed**, not a local file. The `sdlf-pipeline-ott-dashboard` stack hosts it on a private S3 bucket fronted by CloudFront (Origin Access Control). The Trending Lambda regenerates `index.html` into that bucket on **every pipeline run** (`write_dashboard`), so the hosted page is never more than one run stale.
+
+Every figure is **population-true** — sourced from the unfiltered `fpt_ott_searchevents_analytics.curated` table (~1.24 M search events), not the volume-thresholded gold table. The gold `keyword_trends` table keeps its own job: the trending-ranking product behind `GET /trending`.
+
+Open the live dashboard (URL is published to SSM by the stack):
 
 ```powershell
-# Regenerate from current gold table (idempotent)
-python D:\ott-sdlf\scripts\regenerate_dashboard.py
+$URL = aws ssm get-parameter --name /sdlf/pipeline/rDashboardUrl/ott `
+  --region ap-southeast-1 --query Parameter.Value --output text
+Write-Host "Dashboard: $URL"
+Start-Process $URL
+```
 
-# Open the regenerated HTML
-Start-Process "D:\ott-sdlf\dashboard\index.html"
+To save a local copy for offline viewing — `regenerate_dashboard.py` now just downloads the live page (it no longer queries Athena or bakes numbers):
+
+```powershell
+python D:\ott-sdlf\scripts\regenerate_dashboard.py
 ```
 
 **Expected console output**:
 
 ```
-Querying fpt_ott_searchevents_gold.keyword_trends ...
-  total_searches    = 405,499
-  distinct_keywords = 1,691
-  gold_rows         = 13,707
-  overall_abandon   = 8.1%
-  top_genre         = PHIM_VIET (116,117, 8.1% abandon)
-  platforms         = 5
-  genres            = 9
-  top_keywords      = 20
-  trend_date        = 2022-06-18  (Jun 2022)
-
-Wrote D:\ott-sdlf\dashboard\index.html  (11,704 bytes)
+Live dashboard: https://<id>.cloudfront.net
+Saved local copy -> D:\ott-sdlf\dashboard\index.html  (NN,NNN bytes)
 ```
 
-The dashboard shows KPIs, a platform bar chart, a genre donut, a top-20 keyword table, and a platform-abandon horizontal bar — all from the current `keyword_trends` gold table.
+The dashboard shows four KPIs (total searches, distinct keywords, overall abandon rate, top genre), a platform bar chart, a genre donut + table, a top-20 keyword table, and a platform-abandon horizontal bar.
 
-> 📷 **Screenshot —** `dashboard/index.html` open in a browser: KPI tiles, platform bar chart, genre donut, and the top-20 keyword table.
-> *Placeholder: capture and save as `01-static-dashboard.png` in this chapter folder, then replace this block with `![Static gold-table dashboard](01-static-dashboard.png)`.*
+> 📷 **Screenshot —** the dashboard open in a browser at its CloudFront URL: KPI tiles, platform bar chart, genre donut, and the top-20 keyword table.
+> *Placeholder: capture and save as `01-dashboard.png` in this chapter folder, then replace this block with `![Search-analytics dashboard](01-dashboard.png)`.*
 
 ### Path B: the daily content-gap HTML report (Lambda-generated)
 

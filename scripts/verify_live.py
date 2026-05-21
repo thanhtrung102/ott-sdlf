@@ -41,6 +41,7 @@ OTT_STACKS = [
     "sdlf-pipeline-ott-monitoring",
     "sdlf-pipeline-ott-lakeformation",
     "sdlf-pipeline-ott-api",
+    "sdlf-pipeline-ott-dashboard",
 ]
 STATE_MACHINES = ["mainA", "mainB", "mainDQ", "mainGoldDQ"]
 ANALYTICS_LAMBDAS = [
@@ -96,7 +97,7 @@ def verify_cicd() -> None:
 
 
 def verify_stacks() -> None:
-    section("CloudFormation — 11 OTT stacks")
+    section("CloudFormation — 12 OTT stacks")
     cfn = boto3.client("cloudformation", region_name=REGION)
     for name in OTT_STACKS:
         try:

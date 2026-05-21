@@ -1,0 +1,150 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  OTT Search Analytics dashboard hosting — a private S3 bucket fronted by
+  CloudFront (Origin Access Control). The Trending Lambda regenerates
+  index.html into this bucket after every pipeline run (write_dashboard), so
+  the dashboard is never more than one run stale. The bucket stays private;
+  CloudFront is the only reader. A short-TTL cache policy keeps the served
+  page at most ~5 min behind S3.
+  Source: lambda/trending/src/lambda_function.py (write_dashboard)
+
+Parameters:
+  pPipelineReference:
+    Type: String
+    Default: none
+
+Resources:
+
+  ######## S3 — private dashboard bucket ########
+
+  rDashboardBucket:
+    Type: AWS::S3::Bucket
+    # Name is deterministic so pipeline-ott-trending.yaml can grant the
+    # Trending Lambda PutObject on it without a cross-stack reference.
+    Properties:
+      BucketName: !Sub fpt-ott-${AWS::Region}-${AWS::AccountId}-dashboard-prod
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  ######## CloudFront — Origin Access Control + distribution ########
+
+  rOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub sdlf-ott-dashboard-oac-${AWS::AccountId}
+        Description: OAC for the OTT dashboard S3 origin
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # Short-TTL cache policy: the dashboard is overwritten every pipeline run,
+  # so the managed CachingOptimized policy (1-day TTL) would serve a stale
+  # page. 5-min default TTL matches the API's Cache-Control: max-age=300.
+  rCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: !Sub sdlf-ott-dashboard-cache-${AWS::AccountId}
+        Comment: Short TTL so the dashboard reflects the latest pipeline run
+        DefaultTTL: 300
+        MinTTL: 0
+        MaxTTL: 3600
+        ParametersInCacheKeyAndForwardedToOrigin:
+          EnableAcceptEncodingGzip: true
+          EnableAcceptEncodingBrotli: true
+          CookiesConfig:
+            CookieBehavior: none
+          HeadersConfig:
+            HeaderBehavior: none
+          QueryStringsConfig:
+            QueryStringBehavior: none
+
+  rDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: OTT search-analytics dashboard
+        DefaultRootObject: index.html
+        PriceClass: PriceClass_200
+        HttpVersion: http2
+        IPV6Enabled: true
+        Origins:
+          - Id: dashboard-s3-origin
+            DomainName: !GetAtt rDashboardBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt rOriginAccessControl.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: dashboard-s3-origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          CachePolicyId: !Ref rCachePolicy
+
+  ######## S3 bucket policy — CloudFront OAC read only ########
+
+  rDashboardBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref rDashboardBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontServicePrincipalReadOnly
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub arn:${AWS::Partition}:s3:::${rDashboardBucket}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${rDistribution}
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !Sub arn:${AWS::Partition}:s3:::${rDashboardBucket}
+              - !Sub arn:${AWS::Partition}:s3:::${rDashboardBucket}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
+  ######## SSM — discoverable outputs ########
+
+  rDashboardUrlSsm:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /sdlf/pipeline/rDashboardUrl/ott
+      Type: String
+      Value: !Sub https://${rDistribution.DomainName}
+      Description: CloudFront URL of the OTT search-analytics dashboard
+
+  rDashboardBucketSsm:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /sdlf/pipeline/rDashboardBucket/ott
+      Type: String
+      Value: !Ref rDashboardBucket
+      Description: Private S3 bucket the Trending Lambda writes the dashboard index.html into
+
+Outputs:
+  oPipelineReference:
+    Description: CodePipeline reference this stack has been deployed with
+    Value: !Ref pPipelineReference
+  oDashboardUrl:
+    Description: CloudFront URL of the dashboard
+    Value: !Sub https://${rDistribution.DomainName}
+  oDashboardBucket:
+    Description: Private S3 bucket hosting the dashboard
+    Value: !Ref rDashboardBucket

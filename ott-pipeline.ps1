@@ -289,7 +289,11 @@ if (-not $SkipDeploy -and -not $AnalyticsOnly) {
     # 11. Monitoring dashboards + alarms (fully SSM-defaulted)
     Deploy-Stack "sdlf-pipeline-ott-monitoring" "$Tpl\pipeline-ott-monitoring.yaml"
 
-    Write-OK "All 11 stacks deployed"
+    # 12. Dashboard hosting — private S3 bucket + CloudFront (OAC). The Trending
+    # Lambda's write_dashboard() publishes the search-analytics dashboard here.
+    Deploy-Stack "sdlf-pipeline-ott-dashboard" "$Tpl\pipeline-ott-dashboard.yaml"
+
+    Write-OK "All 12 stacks deployed"
 }
 
 # ── Ingest trigger + Stage A → B → DQ wait ────────────────────────────────────

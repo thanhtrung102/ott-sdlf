@@ -35,7 +35,7 @@ The reference dataset is **14 days of June 2022 FPT Play search events (~1.3 M e
 |---|---|---|---|
 | 5.1 | [Overview](5.1-overview/) | 5 min | Architecture map + the 14 AWS services this pipeline uses |
 | 5.2 | [Prerequisites](5.2-prerequisites/) | 10 min | AWS account, IAM bootstrap, region, Bedrock model enablement |
-| 5.3 | [Deploy](5.3-deploy/) | 15 min | SDLF foundation + 11 OTT CloudFormation stacks (via CI/CD or PowerShell) |
+| 5.3 | [Deploy](5.3-deploy/) | 15 min | SDLF foundation + 12 OTT CloudFormation stacks (via CI/CD or PowerShell) |
 | 5.4 | [Ingest](5.4-ingest/) | 30 min | Drop a raw Parquet, watch Stage A → B → DQ fire automatically |
 | 5.5 | [Analyze](5.5-analyze/) | 10 min | Trigger the three analytics Lambdas, read the JSON + dashboard |
 | 5.6 | [Verify](5.6-verify/) | 5 min | 16-assertion contract test, audit visuals, live API call |

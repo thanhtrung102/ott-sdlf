@@ -165,6 +165,10 @@ phases:
         deploy sdlf-pipeline-ott-api sdlf-main-ott/pipeline-ott-api.yaml \
           pApiKey=${API_KEY}
 
+        # Dashboard hosting — private S3 bucket + CloudFront (OAC). The Trending
+        # Lambda's write_dashboard() publishes index.html here every run.
+        deploy sdlf-pipeline-ott-dashboard sdlf-main-ott/pipeline-ott-dashboard.yaml
+
   post_build:
     commands:
       - |
@@ -181,7 +185,8 @@ phases:
           sdlf-pipeline-ott-goldquality \
           sdlf-pipeline-ott-monitoring \
           sdlf-pipeline-ott-lakeformation \
-          sdlf-pipeline-ott-api; do
+          sdlf-pipeline-ott-api \
+          sdlf-pipeline-ott-dashboard; do
           STATUS=$(aws cloudformation describe-stacks \
             --stack-name $stack --region $REGION \
             --query "Stacks[0].StackStatus" --output text 2>/dev/null || echo "NOT_FOUND")

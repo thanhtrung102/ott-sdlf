@@ -139,6 +139,13 @@ Resources:
                   - s3:DeleteObject
                 Resource:
                   - !Sub arn:${AWS::Partition}:s3:::${pGoldBucket}/ott/searchevents/gold/*
+              # write_dashboard() publishes index.html to the CloudFront-fronted
+              # dashboard bucket (sdlf-pipeline-ott-dashboard) after every run.
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::fpt-ott-${AWS::Region}-${AWS::AccountId}-dashboard-prod/*
               - Effect: Allow
                 Action:
                   - lakeformation:GetDataAccess
@@ -238,6 +245,7 @@ Resources:
           MAX_TRENDING_ROWS: !Sub "${pMaxTrendingRows}"
           GOLD_DATABASE: !Ref pGoldDatabaseName
           GOLD_LOCATION: !Sub s3://${pGoldBucket}/ott/searchevents/gold/keyword_trends/
+          DASHBOARD_BUCKET: !Sub fpt-ott-${AWS::Region}-${AWS::AccountId}-dashboard-prod
           ATHENA_WORKGROUP: sdlf-ott
           TEAM: ott
           PIPELINE: main

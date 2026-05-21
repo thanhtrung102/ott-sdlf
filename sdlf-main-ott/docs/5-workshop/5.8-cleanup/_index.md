@@ -30,12 +30,18 @@ We'll re-enable / re-delete at the end.
 
 ---
 
-## 5.8.2 Delete the 11 OTT-managed stacks
+## 5.8.2 Delete the 12 OTT-managed stacks
 
 Reverse dependency order. The script below deletes in the safest sequence (consumers first, producers last).
 
 ```powershell
+# The dashboard's S3 bucket must be emptied before CloudFormation will delete it.
+$DASH = aws ssm get-parameter --name /sdlf/pipeline/rDashboardBucket/ott `
+  --region ap-southeast-1 --query Parameter.Value --output text 2>$null
+if ($DASH) { aws s3 rm "s3://$DASH" --recursive --region ap-southeast-1 | Out-Null }
+
 $ORDER = @(
+  "sdlf-pipeline-ott-dashboard",
   "sdlf-pipeline-ott-api",
   "sdlf-pipeline-ott-lakeformation",
   "sdlf-pipeline-ott-monitoring",
@@ -59,6 +65,7 @@ foreach ($s in $ORDER) {
 **Expected output** (~10 min total — each stack ~30-90 s):
 
 ```
+Deleting sdlf-pipeline-ott-dashboard ... OK
 Deleting sdlf-pipeline-ott-api ... OK
 Deleting sdlf-pipeline-ott-lakeformation ... OK
 Deleting sdlf-pipeline-ott-monitoring ... OK
