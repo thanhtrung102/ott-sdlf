@@ -162,6 +162,16 @@ Resources:
                 Resource:
                   - !Sub arn:${AWS::Partition}:s3:::ott-search-${AWS::AccountId}-prod/ott/searchevents/*
                   - !Sub arn:${AWS::Partition}:s3:::fpt-ott-${AWS::Region}-${AWS::AccountId}-artifacts-prod/lambda/*
+              # The Deploy buildspec discovers the project bucket's KMS key via
+              # s3api get-bucket-encryption to wire pProjectBucketKmsKeyArn into
+              # the LUT-Refresh stack. This is a bucket-level action — it needs
+              # the bucket ARN, not the /* object ARN.
+              - Sid: BucketEncryptionRead
+                Effect: Allow
+                Action:
+                  - s3:GetEncryptionConfiguration
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::ott-search-${AWS::AccountId}-prod
               - Sid: SSM
                 Effect: Allow
                 Action:
