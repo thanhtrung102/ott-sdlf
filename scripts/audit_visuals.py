@@ -17,6 +17,7 @@ import boto3
 import io
 import sys
 import time
+from datetime import datetime, timedelta
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
@@ -26,6 +27,32 @@ WORKGROUP = "sdlf-ott"
 OUTPUT = "s3://fpt-ott-ap-southeast-1-703668403514-athena-prod/audit-visuals/"
 
 ath = boto3.client("athena", region_name=REGION)
+logs = boto3.client("logs", region_name=REGION)
+
+
+def latest_lineage():
+    """Most recent Glue LINEAGE line from /aws-glue/jobs/output, or None.
+
+    Read live rather than hardcoded — retention swings with each ingest
+    (a duplicate re-ingest pushes it well below the first-run ~0.88).
+    """
+    start = int((datetime.now() - timedelta(days=3)).timestamp() * 1000)
+    try:
+        events = []
+        for page in logs.get_paginator("filter_log_events").paginate(
+            logGroupName="/aws-glue/jobs/output",
+            filterPattern="LINEAGE",
+            startTime=start,
+        ):
+            events.extend(page.get("events", []))
+    except Exception:
+        return None
+    # filter_log_events interleaves streams — events are not globally
+    # time-ordered, so pick the newest LINEAGE line by event timestamp.
+    runs = [e for e in events if "LINEAGE run_id" in e["message"]]
+    if not runs:
+        return None
+    return max(runs, key=lambda e: e["timestamp"])["message"].strip()
 
 
 def run(sql, label):
@@ -87,11 +114,15 @@ h, r = run(
 )
 print_bar(h, r)
 
-print("\n1b. Curated retention vs the published LINEAGE log")
+print("\n1b. Curated retention vs the latest Glue LINEAGE log")
 h, r = run(f"SELECT COUNT(*) FROM {DB}.curated", "curated-count")
 cur_n = int(r[0][0]) if r else 0
 print(f"  Curated rows: {cur_n:,}")
-print(f"  LINEAGE log (latest Glue run): raw=1,298,470 -> output=1,145,826 (retention=0.882)")
+lineage = latest_lineage()
+if lineage:
+    print(f"  {lineage}")
+else:
+    print("  LINEAGE log: no recent Glue run found in /aws-glue/jobs/output")
 print(f"  Note: curated table count may include rows from prior runs in partitions")
 print(f"        that today's run did not overwrite (DYNAMIC partition mode).")
 

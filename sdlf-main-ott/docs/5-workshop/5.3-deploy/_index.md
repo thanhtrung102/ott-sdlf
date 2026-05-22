@@ -162,6 +162,8 @@ Step 4: Revoke IAM_ALLOWED_PRINCIPALS to activate enforcement
   TableWithColumns grants now visible: 5
 ```
 
+> On a **first** activation, step 4 prints `OK`. The script is idempotent — on any **re-run** (the table is already enforced) step 4 prints `ALREADY_REVOKED` instead, which is also success. The post-state count is the 5 pipeline-role grants plus any admin grant `lf_grants.py` added, so it may read `5` or `6`; `verify_monitoring_and_lf.py` (below) is the authoritative check.
+
 > ⚠️ **WARNING:** Once `IAM_ALLOWED_PRINCIPALS` is revoked, only principals explicitly granted in step 1 + step 2 can read `curated`. Any role outside that set loses access.
 
 **Verify enforcement** — the empirical check, runs in <1 second:
