@@ -768,16 +768,20 @@ def write_dashboard(trending_rows, trending_meta):
     window = _derive_window(data["dt_window"])
 
     html = _render_dashboard_html(data, window, trending_rows, trending_meta)
+    # Report the encoded byte count, not len(html) — the latter counts Python
+    # str characters, which undercounts by ~8 KB because Vietnamese diacritics
+    # are 2-byte UTF-8 sequences. The S3 object size is the encoded length.
+    body = html.encode("utf-8")
     s3.put_object(
         Bucket=bucket,
         Key="index.html",
-        Body=html.encode("utf-8"),
+        Body=body,
         ContentType="text/html; charset=utf-8",
         CacheControl="public, max-age=300",
     )
-    logger.info(f"Dashboard written -> s3://{bucket}/index.html ({len(html)} bytes, "
+    logger.info(f"Dashboard written -> s3://{bucket}/index.html ({len(body)} bytes, "
                 f"window={window['label']})")
-    return len(html)
+    return len(body)
 
 
 def lambda_handler(event, context):

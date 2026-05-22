@@ -30,10 +30,11 @@ print(f"Live dashboard: {url}")
 
 req = urllib.request.Request(url, headers={"User-Agent": "regenerate_dashboard"})
 with urllib.request.urlopen(req, timeout=30) as resp:
-    html = resp.read().decode("utf-8")
+    raw = resp.read()
+html = raw.decode("utf-8")
 
 HTML_PATH.parent.mkdir(parents=True, exist_ok=True)
 HTML_PATH.write_text(html, encoding="utf-8")
-print(f"Saved local copy -> {HTML_PATH}  ({len(html):,} bytes)")
+print(f"Saved local copy -> {HTML_PATH}  ({len(raw):,} bytes)")
 print(f"  Hosted (always current): {url}")
 print(f"  Local copy:              file:///{HTML_PATH.as_posix()}")
