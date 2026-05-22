@@ -51,15 +51,15 @@ Get-Content C:\tmp\trending-out.json
 {
   "dt": "2022-06-23",
   "mode": "fallback / volume-only",
-  "trending_rows": 500,
-  "dashboard_bytes": 245312,
+  "trending_rows": 517,
+  "dashboard_bytes": 390800,
   "errors": 0
 }
 ```
 
 > `mode: fallback / volume-only` indicates fewer than 4 weeks of historical data — the growth comparison falls back to raw volume ranking. With ≥4 weeks ingested, `mode` becomes `growth ≥ 3x`.
 
-`dashboard_bytes` is the size of the freshly-rendered `index.html` published to the CloudFront-fronted dashboard bucket — see [§5.6.3](../5.6-verify/#563-the-dashboard).
+`dashboard_bytes` is the UTF-8 byte size of the freshly-rendered `index.html` published to the CloudFront-fronted dashboard bucket — it equals the S3 object's `ContentLength` exactly, and matches the `bytes=` figure the contract test and `verify_live.py` report. See [§5.6.3](../5.6-verify/#563-the-dashboard).
 
 ---
 
@@ -83,7 +83,7 @@ The Lambda runs nine Athena queries concurrently against `curated`, then assembl
 All sections are stamped with the dt window they actually aggregated. The header caption reads:
 
 ```
-Source: curated — 2022-06-01 → 2022-06-23 • 23 days • 1,151,234 rows — generated ...
+Source: curated — 2022-06-01 → 2022-06-23 • 21 days • 2 missing (2022-06-16; 2022-06-19) • 1,145,826 rows — generated ...
 ```
 
 If any days are missing from the window, the caption lists them (e.g., `• 2 missing (2022-06-16; 2022-06-19)`).
@@ -150,7 +150,7 @@ Every section header carries a `.src` caption like:
 
 ```
 curated — abandon rate by keyword (excludes UNKNOWN+EMPTY_QUERY, HAVING abandoned ≥ 5)
-        — 2022-06-01 → 2022-06-23 • 23 days • 1,151,234 rows
+        — 2022-06-01 → 2022-06-23 • 21 days • 2 missing (2022-06-16; 2022-06-19) • 1,145,826 rows
 ```
 
 That caption is the contract: it tells the stakeholder exactly what slice of `curated` the figures came from. If the dataset later grows or has gaps, the caption updates automatically on the next refresh.

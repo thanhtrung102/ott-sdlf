@@ -77,23 +77,33 @@ anthropic.claude-haiku-4-5-20251001-v1:0
 
 The OTT pipeline assumes three SDLF framework stacks are already deployed: foundations, team, dataset. They publish SSM parameters under `/sdlf/...` that the OTT templates resolve at deploy time.
 
-**Deploy them once**:
+These three stacks are **one-time setup**. The block below deploys each *only if it does not already exist* — on an account where SDLF is already provisioned it deploys nothing and just reports the existing status.
+
+> ⚠️ **WARNING — never re-run `cloudformation deploy` on an existing SDLF foundation stack.** It is *not* a safe no-op. The SDLF `dataset` module derives the raw Glue crawler's S3 target from `pS3Prefix` (`searchevents`), but the raw bucket stores data one level deeper, under `ott/searchevents/` — so the live `sdlf-searchevents-raw-crawler` is hand-corrected to `ott/searchevents/` and has drifted from the template. That crawler uses `RecrawlBehavior: CRAWL_NEW_FOLDERS_ONLY`, which makes its S3 target **immutable**. A re-deploy that tries to reconcile the crawler fails with `Amazon S3 target is immutable…`, and the failed update **cannot roll back** — leaving `sdlf-dataset-searchevents-prod` stuck in `UPDATE_ROLLBACK_FAILED`. Recovery then needs a manual `continue-update-rollback` after flipping the crawler to `CRAWL_EVERYTHING`. The existence guard below is what keeps you out of that state.
+
+**Deploy them once** (guarded — skips any stack that already exists):
 
 ```powershell
 $REGION = "ap-southeast-1"
 $TPL    = "D:\ott-sdlf\sdlf-main"
 
-aws cloudformation deploy --template-file "$TPL\foundations-ott-prod.yaml" `
-  --stack-name sdlf-foundations-ott-prod --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND `
-  --region $REGION
-
-aws cloudformation deploy --template-file "$TPL\team-ott-prod.yaml" `
-  --stack-name sdlf-team-ott-prod --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND `
-  --region $REGION
-
-aws cloudformation deploy --template-file "$TPL\dataset-searchevents-prod.yaml" `
-  --stack-name sdlf-dataset-searchevents-prod --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND `
-  --region $REGION
+$stacks = @(
+  @{ Name = "sdlf-foundations-ott-prod";      Template = "foundations-ott-prod.yaml" },
+  @{ Name = "sdlf-team-ott-prod";             Template = "team-ott-prod.yaml" },
+  @{ Name = "sdlf-dataset-searchevents-prod"; Template = "dataset-searchevents-prod.yaml" }
+)
+foreach ($s in $stacks) {
+  $status = aws cloudformation describe-stacks --stack-name $s.Name --region $REGION `
+    --query "Stacks[0].StackStatus" --output text 2>$null
+  if ($status) {
+    Write-Host "SKIP   $($s.Name) — already exists ($status)"
+  } else {
+    Write-Host "DEPLOY $($s.Name) ..."
+    aws cloudformation deploy --template-file "$TPL\$($s.Template)" `
+      --stack-name $s.Name --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND `
+      --region $REGION
+  }
+}
 ```
 
 **Verify** — every one of these SSM paths must resolve:
@@ -171,7 +181,7 @@ aws s3api head-object --bucket "ott-search-$ACCT-prod" `
 
 ## 5.2.6 Source data — 14 days of OTT Parquet
 
-The reference dataset is `fpt-search-events-2022-06-{01..14}.parquet` (~1.3 M events/day). For this workshop, the data is pre-staged in a public-read S3 bucket.
+The reference dataset is `fpt-search-events-2022-06-{01..14}.parquet` (~1.3 M events/day). For this workshop, the data is pre-staged in the project bucket under `ott-search-703668403514-prod/raw-source/log_search/`.
 
 **Copy it into your raw bucket**:
 
@@ -179,7 +189,7 @@ The reference dataset is `fpt-search-events-2022-06-{01..14}.parquet` (~1.3 M ev
 $RAW = aws ssm get-parameter --name /sdlf/storage/rRawBucket/prod --query Parameter.Value --output text
 foreach ($d in 1..14) {
   $dt = "{0:00}" -f $d
-  aws s3 cp "s3://ott-search-703668403514-demo/raw-source/log_search/202206$dt/" `
+  aws s3 cp "s3://ott-search-703668403514-prod/raw-source/log_search/202206$dt/" `
     "s3://$RAW/ott/searchevents/202206$dt/" `
     --recursive --region ap-southeast-1
   Write-Host "Copied partition 202206$dt"

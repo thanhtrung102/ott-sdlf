@@ -210,11 +210,12 @@ def verify_dashboard() -> None:
          "Dashboard URL published to SSM", url)
     try:
         with urlopen(url, timeout=15) as resp:
-            body = resp.read().decode("utf-8", errors="replace")
-            ok = resp.status == 200 and len(body) > 8000 and "<!DOCTYPE html" in body
+            raw = resp.read()
+            body = raw.decode("utf-8", errors="replace")
+            ok = resp.status == 200 and len(raw) > 8000 and "<!DOCTYPE html" in body
             line("PASS" if ok else "FAIL",
                  "Dashboard HTTP 200 + non-trivial HTML",
-                 f"status={resp.status} bytes={len(body)}")
+                 f"status={resp.status} bytes={len(raw)}")
     except (HTTPError, URLError) as e:
         line("FAIL", "Dashboard fetch", str(e))
         return
