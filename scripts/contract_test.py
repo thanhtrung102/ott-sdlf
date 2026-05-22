@@ -76,12 +76,11 @@ print("=== Contract: CloudFront dashboard (single user-facing surface) ===")
 dash_url = ssm.get_parameter(Name="/sdlf/pipeline/rDashboardUrl/ott")["Parameter"]["Value"]
 check("Dashboard URL is published to SSM", dash_url.startswith("https://"), f"url={dash_url}")
 with urlopen(dash_url, timeout=15) as r:
-    raw = r.read()
-    body = raw.decode("utf-8", errors="replace")
+    body = r.read().decode("utf-8", errors="replace")
 check(
     "Dashboard returns HTTP 200 + non-trivial HTML",
-    r.status == 200 and len(raw) > 8000 and "<!DOCTYPE html" in body,
-    f"status={r.status} bytes={len(raw)}",
+    r.status == 200 and len(body) > 8000 and "<!DOCTYPE html" in body,
+    f"status={r.status} bytes={len(body)}",
 )
 # Single user-facing surface: every section must be present in the HTML, not
 # offloaded to a JSON API.

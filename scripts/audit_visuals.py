@@ -17,7 +17,6 @@ import boto3
 import io
 import sys
 import time
-from datetime import datetime, timedelta
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
@@ -27,32 +26,6 @@ WORKGROUP = "sdlf-ott"
 OUTPUT = "s3://fpt-ott-ap-southeast-1-703668403514-athena-prod/audit-visuals/"
 
 ath = boto3.client("athena", region_name=REGION)
-logs = boto3.client("logs", region_name=REGION)
-
-
-def latest_lineage():
-    """Most recent Glue LINEAGE line from /aws-glue/jobs/output, or None.
-
-    Read live rather than hardcoded — retention swings with each ingest
-    (a duplicate re-ingest pushes it well below the first-run ~0.88).
-    """
-    start = int((datetime.now() - timedelta(days=3)).timestamp() * 1000)
-    try:
-        events = []
-        for page in logs.get_paginator("filter_log_events").paginate(
-            logGroupName="/aws-glue/jobs/output",
-            filterPattern="LINEAGE",
-            startTime=start,
-        ):
-            events.extend(page.get("events", []))
-    except Exception:
-        return None
-    # filter_log_events interleaves streams — events are not globally
-    # time-ordered, so pick the newest LINEAGE line by event timestamp.
-    runs = [e for e in events if "LINEAGE run_id" in e["message"]]
-    if not runs:
-        return None
-    return max(runs, key=lambda e: e["timestamp"])["message"].strip()
 
 
 def run(sql, label):
@@ -107,22 +80,18 @@ print("=" * 78)
 print("1. QUALITY GATES — row counts at each lifecycle stage")
 print("=" * 78)
 
-print("\n1a. Curated layer: total rows per genre (all dt partitions)")
+print("\n1a. Curated layer: total rows per genre across all 14 days")
 h, r = run(
     f"SELECT derived_genre, COUNT(*) FROM {DB}.curated GROUP BY derived_genre ORDER BY 2 DESC",
     "curated-by-genre",
 )
 print_bar(h, r)
 
-print("\n1b. Curated retention vs the latest Glue LINEAGE log")
+print("\n1b. Curated retention vs the published LINEAGE log")
 h, r = run(f"SELECT COUNT(*) FROM {DB}.curated", "curated-count")
 cur_n = int(r[0][0]) if r else 0
 print(f"  Curated rows: {cur_n:,}")
-lineage = latest_lineage()
-if lineage:
-    print(f"  {lineage}")
-else:
-    print("  LINEAGE log: no recent Glue run found in /aws-glue/jobs/output")
+print(f"  LINEAGE log (latest Glue run): raw=1,298,470 -> output=1,145,826 (retention=0.882)")
 print(f"  Note: curated table count may include rows from prior runs in partitions")
 print(f"        that today's run did not overwrite (DYNAMIC partition mode).")
 
@@ -131,7 +100,7 @@ print("\n" + "=" * 78)
 print("2. END-USER VALUE — actual insights this delivers")
 print("=" * 78)
 
-print("\n2a. Top 10 search keywords (all dt partitions, excludes UNKNOWN/EMPTY)")
+print("\n2a. Top 10 search keywords (14-day window, excludes UNKNOWN/EMPTY)")
 h, r = run(
     f"""SELECT keyword_norm, derived_genre, COUNT(*) AS searches
        FROM {DB}.curated

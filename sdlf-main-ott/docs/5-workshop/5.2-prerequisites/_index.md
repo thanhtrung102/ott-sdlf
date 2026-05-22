@@ -77,33 +77,23 @@ anthropic.claude-haiku-4-5-20251001-v1:0
 
 The OTT pipeline assumes three SDLF framework stacks are already deployed: foundations, team, dataset. They publish SSM parameters under `/sdlf/...` that the OTT templates resolve at deploy time.
 
-These three stacks are **one-time setup**. The block below deploys each *only if it does not already exist* — on an account where SDLF is already provisioned it deploys nothing and just reports the existing status.
-
-> ⚠️ **WARNING — never re-run `cloudformation deploy` on an existing SDLF foundation stack.** It is *not* a safe no-op. The SDLF `dataset` module derives the raw Glue crawler's S3 target from `pS3Prefix` (`searchevents`), but the raw bucket stores data one level deeper, under `ott/searchevents/` — so the live `sdlf-searchevents-raw-crawler` is hand-corrected to `ott/searchevents/` and has drifted from the template. That crawler uses `RecrawlBehavior: CRAWL_NEW_FOLDERS_ONLY`, which makes its S3 target **immutable**. A re-deploy that tries to reconcile the crawler fails with `Amazon S3 target is immutable…`, and the failed update **cannot roll back** — leaving `sdlf-dataset-searchevents-prod` stuck in `UPDATE_ROLLBACK_FAILED`. Recovery then needs a manual `continue-update-rollback` after flipping the crawler to `CRAWL_EVERYTHING`. The existence guard below is what keeps you out of that state.
-
-**Deploy them once** (guarded — skips any stack that already exists):
+**Deploy them once**:
 
 ```powershell
 $REGION = "ap-southeast-1"
 $TPL    = "D:\ott-sdlf\sdlf-main"
 
-$stacks = @(
-  @{ Name = "sdlf-foundations-ott-prod";      Template = "foundations-ott-prod.yaml" },
-  @{ Name = "sdlf-team-ott-prod";             Template = "team-ott-prod.yaml" },
-  @{ Name = "sdlf-dataset-searchevents-prod"; Template = "dataset-searchevents-prod.yaml" }
-)
-foreach ($s in $stacks) {
-  $status = aws cloudformation describe-stacks --stack-name $s.Name --region $REGION `
-    --query "Stacks[0].StackStatus" --output text 2>$null
-  if ($status) {
-    Write-Host "SKIP   $($s.Name) — already exists ($status)"
-  } else {
-    Write-Host "DEPLOY $($s.Name) ..."
-    aws cloudformation deploy --template-file "$TPL\$($s.Template)" `
-      --stack-name $s.Name --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND `
-      --region $REGION
-  }
-}
+aws cloudformation deploy --template-file "$TPL\foundations-ott-prod.yaml" `
+  --stack-name sdlf-foundations-ott-prod --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND `
+  --region $REGION
+
+aws cloudformation deploy --template-file "$TPL\team-ott-prod.yaml" `
+  --stack-name sdlf-team-ott-prod --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND `
+  --region $REGION
+
+aws cloudformation deploy --template-file "$TPL\dataset-searchevents-prod.yaml" `
+  --stack-name sdlf-dataset-searchevents-prod --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND `
+  --region $REGION
 ```
 
 **Verify** — every one of these SSM paths must resolve:
@@ -143,23 +133,15 @@ The Glue ETL job loads two files from a project-specific bucket — `ott-search-
 
 Of the two, **only the classifier zip is a manual prerequisite.** The Glue `.py` script is staged automatically by whichever deploy path you use — the CI/CD `buildspec-deploy.yml` and `ott-pipeline.ps1` both `aws s3 cp` it from the repo before the Glue-job stack deploys. The classifier zip is a binary that is *not* tracked in the repo, so no deploy path can stage it for you — you must upload it once, up front.
 
-**Bootstrap the classifier zip** (one-time — guarded, uploads only if absent):
+**Bootstrap the classifier zip** (one-time):
 
 ```powershell
 $REGION = "ap-southeast-1"
 $ACCT   = aws sts get-caller-identity --query Account --output text
 $GLUEBK = "ott-search-$ACCT-prod"
-$KEY    = "ott/searchevents/genre_classifier_pkg.zip"
 
-# Upload the repo seed classifier ONLY if the key is absent. The LUT-Refresh
-# Lambda overwrites this object with a Bedrock-enriched classifier on every
-# run — blindly re-uploading the seed would discard that enrichment.
-$size = aws s3api head-object --bucket $GLUEBK --key $KEY --region $REGION --query ContentLength --output text 2>$null
-if ($size) {
-  Write-Host "SKIP   s3://$GLUEBK/$KEY already present ($size bytes)"
-} else {
-  aws s3 cp "D:\ott-sdlf\genre_classifier_pkg.zip" "s3://$GLUEBK/$KEY" --region $REGION
-}
+aws s3 cp "D:\ott-sdlf\genre_classifier_pkg.zip" `
+  "s3://$GLUEBK/ott/searchevents/genre_classifier_pkg.zip" --region $REGION
 ```
 
 If the classifier zip is missing, the Glue job fails at launch with `LAUNCH ERROR | Error downloading from S3 ... key does not exist (404)`.
@@ -175,42 +157,32 @@ aws s3api head-object --bucket "ott-search-$ACCT-prod" `
   --query "{Size:ContentLength, Modified:LastModified}" --output table
 ```
 
-**Expected** — a non-trivial object is returned. The repo seed zip is ~865 KB; once the LUT-Refresh Lambda has run, the live object is larger (it grows as Bedrock enriches the classifier), e.g.:
+**Expected** (live, captured 2026-05-20):
 
 ```
-----------------------------------------
-| Size      | Modified                 |
-|-----------|--------------------------|
-| 1139913   | 2026-05-22T02:49:56+00:00|
-----------------------------------------
+---------------------------------------
+| Size      | Modified                |
+|-----------|-------------------------|
+| 944698    | 2026-05-20T07:16:29+00 |
+---------------------------------------
 ```
 
 ---
 
 ## 5.2.6 Source data — 14 days of OTT Parquet
 
-The reference dataset is `fpt-search-events-2022-06-{01..14}.parquet` (~1.3 M events/day). For this workshop, the data is pre-staged in the project bucket under `ott-search-703668403514-prod/raw-source/log_search/`.
+The reference dataset is `fpt-search-events-2022-06-{01..14}.parquet` (~1.3 M events/day). For this workshop, the data is pre-staged in a public-read S3 bucket.
 
-**Copy it into your raw bucket** (guarded — copies only partitions not already present):
+**Copy it into your raw bucket**:
 
 ```powershell
 $RAW = aws ssm get-parameter --name /sdlf/storage/rRawBucket/prod --query Parameter.Value --output text
 foreach ($d in 1..14) {
   $dt = "{0:00}" -f $d
-  # Skip a partition that is already in the raw bucket. Once the pipeline is
-  # deployed (chapter 5.3), every PutObject under ott/searchevents/ fires an
-  # EventBridge rule → Stage A; re-copying all 14 partitions would launch 14
-  # spurious pipeline runs. On a fresh account (pipeline not yet deployed)
-  # nothing is present, so all 14 copy normally.
-  $present = aws s3 ls "s3://$RAW/ott/searchevents/202206$dt/" --region ap-southeast-1 2>$null
-  if ($present) {
-    Write-Host "SKIP   partition 202206$dt — already present"
-  } else {
-    aws s3 cp "s3://ott-search-703668403514-prod/raw-source/log_search/202206$dt/" `
-      "s3://$RAW/ott/searchevents/202206$dt/" `
-      --recursive --region ap-southeast-1
-    Write-Host "Copied partition 202206$dt"
-  }
+  aws s3 cp "s3://ott-search-703668403514-demo/raw-source/log_search/202206$dt/" `
+    "s3://$RAW/ott/searchevents/202206$dt/" `
+    --recursive --region ap-southeast-1
+  Write-Host "Copied partition 202206$dt"
 }
 ```
 

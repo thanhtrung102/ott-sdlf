@@ -93,16 +93,7 @@ def revoke_iam_allowed(lf, account, db, dry):
         return "OK"
     except ClientError as e:
         code = e.response["Error"]["Code"]
-        msg = e.response["Error"]["Message"].lower()
-        # IAM_ALLOWED_PRINCIPALS already revoked: revoking again raises
-        # InvalidInputException. AWS phrases this as "No permissions revoked.
-        # Grantee does not have:[ALL]" (and historically "...does not exist").
-        # Either way the table is already enforced — that is success, not FAIL.
-        if code == "InvalidInputException" and (
-            "does not have" in msg
-            or "does not exist" in msg
-            or "no permissions revoked" in msg
-        ):
+        if code == "InvalidInputException" and "does not exist" in e.response["Error"]["Message"].lower():
             return "ALREADY_REVOKED"
         return f"FAIL {code}: {e.response['Error']['Message']}"
 

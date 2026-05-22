@@ -25,7 +25,7 @@ python D:\ott-sdlf\scripts\contract_test.py
 ```
 === Contract: CloudFront dashboard (single user-facing surface) ===
   [PASS] Dashboard URL is published to SSM  (url=https://d3bdq70ai5wf18.cloudfront.net)
-  [PASS] Dashboard returns HTTP 200 + non-trivial HTML  (status=200 bytes=390800)
+  [PASS] Dashboard returns HTTP 200 + non-trivial HTML  (status=200 bytes=245312)
   [PASS] Dashboard section present: Total Searches
   [PASS] Dashboard section present: Distinct Keywords
   [PASS] Dashboard section present: Top 20 Keywords
@@ -107,7 +107,7 @@ Every figure is **population-true** — sourced from the unfiltered `fpt_ott_sea
 
 Sections rendered:
 
-- **Header strip** — overall dt window stamp: `Source: curated — 2022-06-01 → 2022-06-23 • 21 days • 2 missing (2022-06-16; 2022-06-19) • 1,145,826 rows`
+- **Header strip** — overall dt window stamp: `Source: curated — 2022-06-01 → 2022-06-23 • 23 days • 1,151,234 rows`
 - **KPIs** — total searches, distinct keywords, overall abandon rate, top genre
 - **Volume** — searches by platform, genre distribution, top-20 keywords, platform abandon rates
 - **Business questions** — every section stamped with its dt window:
@@ -197,8 +197,8 @@ if ($resp.Content -match '(?s)Source: curated.+?(\d+) days.+?(\d[\d,]*) rows') {
 ```
 Status:           200
 Cache-Control:    public, max-age=300
-Bytes:            390800
-Window stamp:     21 days, 1,145,826 rows
+Bytes:            245312
+Window stamp:     23 days, 1,151,234 rows
 ```
 
 If `Status: 200` + a parseable source-attribution window stamp comes back, the pipeline is end-to-end healthy.

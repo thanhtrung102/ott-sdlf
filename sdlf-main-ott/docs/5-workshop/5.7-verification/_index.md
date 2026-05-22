@@ -74,7 +74,7 @@ account=703668403514  region=ap-southeast-1
 
 === CloudFront dashboard — single user-facing surface ===
   [PASS] Dashboard URL published to SSM  (https://...cloudfront.net)
-  [PASS] Dashboard HTTP 200 + non-trivial HTML  (status=200 bytes=390800)
+  [PASS] Dashboard HTTP 200 + non-trivial HTML  (status=200 bytes=245312)
   [PASS] Header source-attribution stamp present
   [PASS] Dashboard section present: Total Searches
   [PASS] Dashboard section present: Distinct Keywords
