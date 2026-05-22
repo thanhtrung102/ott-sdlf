@@ -66,6 +66,10 @@ Parameters:
     Description: >
       Export execution and Glue role ARNs to SSM.
       Set true for the curated DQ instance, which the LF stack references.
+  pSnsTopicArn:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /SDLF/SNS/ott/Notifications
+    Description: SNS topic the DQ state machine notifies when an evaluation fails
 
 Conditions:
   IsStatesMachineTrigger: !Equals [!Ref pTriggerType, statesMachine]
@@ -141,6 +145,11 @@ Resources:
                   - xray:GetSamplingRules
                   - xray:GetSamplingTargets
                 Resource: "*"
+              # The NotifyDQFailed state publishes a failure alert to SNS
+              # before the state machine transitions to DQFailed.
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref pSnsTopicArn
 
   rGlueDQRole:
     Type: AWS::IAM::Role
@@ -361,7 +370,7 @@ Resources:
                   {
                     "Variable": "$.evaluation_status.Status",
                     "StringEquals": "FAILED",
-                    "Next": "DQFailed"
+                    "Next": "NotifyDQFailed"
                   }
                 ],
                 "Default": "WaitForEvaluation"
@@ -385,6 +394,17 @@ Resources:
               },
               "DQSucceeded": {
                 "Type": "Succeed"
+              },
+              "NotifyDQFailed": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::sns:publish",
+                "Parameters": {
+                  "TopicArn": "${pSnsTopicArn}",
+                  "Subject": "OTT DQ Check Failed",
+                  "Message.$": "States.Format('DQ evaluation FAILED for ${pDatabaseName}.${pTableName}. Run date: {}. Check Step Functions console for details.', $.date_info.run_date)"
+                },
+                "ResultPath": null,
+                "Next": "DQFailed"
               },
               "DQFailed": {
                 "Type": "Fail",

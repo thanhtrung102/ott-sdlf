@@ -143,6 +143,24 @@ Resources:
                   - xray:PutTraceSegments
                   - xray:PutTelemetryRecords
                 Resource: "*"
+        # The SDLF datalake-library Lambda layer resolves /SDLF*/ SSM
+        # parameters at runtime. This grant was historically applied
+        # out-of-band (put-role-policy); declared here so the role is fully
+        # defined by this template — no reliance on imperative patching.
+        - PolicyName: sdlf-ssm-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: AllowSDLF2SSMRead
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/SDLF2/*
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/sdlf/*
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/SDLF/*
 
   ######## SQS DLQ ########
 

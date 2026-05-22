@@ -127,7 +127,11 @@ Resources:
       PermissionsWithGrantOption: []
 
   # Glue ETL job role — writes curated partitions directly to S3 (no catalog
-  # read needed), but grant SELECT so DQ runs on the same role path work.
+  # INSERT needed), so SELECT is the only grant that matters. INSERT/ALTER are
+  # table-level permissions and are not valid on a column-scoped
+  # (TableWithColumns) grant — Lake Formation silently keeps only SELECT, so
+  # declaring them here just produces permanent drift. SELECT lets DQ runs on
+  # the same role path read the table.
   rLFGlueJob:
     Type: AWS::LakeFormation::PrincipalPermissions
     Properties:
@@ -141,8 +145,6 @@ Resources:
           ColumnWildcard: {}
       Permissions:
         - SELECT
-        - INSERT
-        - ALTER
       PermissionsWithGrantOption: []
 
 Outputs:

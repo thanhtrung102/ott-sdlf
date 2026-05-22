@@ -97,6 +97,68 @@ Resources:
                 Resource:
                   - !Ref pKmsKeyArn
                   - "{{resolve:ssm:/SDLF2/KMS/KeyArn}}"
+        # The three policies below were historically applied out-of-band
+        # (put-role-policy) and owned by no CloudFormation stack. They are
+        # declared here so the Glue role is fully defined by this template.
+        # glue-kms-artifacts: decrypt the Glue script + classifier zip in the
+        # project bucket (encrypted with its own KMS key, distinct from the
+        # SDLF key) — without this a clean deploy fails to read --extra-py-files.
+        - PolicyName: glue-kms-artifacts
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: GlueArtifactsKMS
+                Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                  - kms:DescribeKey
+                  - kms:Encrypt
+                  - kms:ReEncrypt*
+                  - kms:CreateGrant
+                Resource:
+                  - !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/5ce12d85-6891-4b70-b225-0471ef278219
+                  - !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/26f9e159-723a-4d6b-bc63-7f8a745f88e6
+        # glue-s3-write: read/write the raw, stage and analytics data buckets.
+        - PolicyName: glue-s3-write
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: GlueS3WriteAnalytics
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                  - s3:ListBucketMultipartUploads
+                  - s3:AbortMultipartUpload
+                  - s3:PutObjectTagging
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::fpt-ott-${AWS::Region}-${AWS::AccountId}-analytics-prod
+                  - !Sub arn:${AWS::Partition}:s3:::fpt-ott-${AWS::Region}-${AWS::AccountId}-stage-prod
+                  - !Sub arn:${AWS::Partition}:s3:::fpt-ott-${AWS::Region}-${AWS::AccountId}-raw-prod
+                  - !Sub arn:${AWS::Partition}:s3:::fpt-ott-${AWS::Region}-${AWS::AccountId}-analytics-prod/*
+                  - !Sub arn:${AWS::Partition}:s3:::fpt-ott-${AWS::Region}-${AWS::AccountId}-stage-prod/*
+                  - !Sub arn:${AWS::Partition}:s3:::fpt-ott-${AWS::Region}-${AWS::AccountId}-raw-prod/*
+        # sdlf-ott-kms-access: SDLF infrastructure + foundations KMS keys.
+        - PolicyName: sdlf-ott-kms-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: AllowSDLFKMSKeys
+                Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:Encrypt
+                  - kms:GenerateDataKey*
+                  - kms:ReEncrypt*
+                  - kms:DescribeKey
+                Resource:
+                  - !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/b0103352-61f4-4cf9-95f0-63cd89b33be2
+                  - !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/26f9e159-723a-4d6b-bc63-7f8a745f88e6
 
   rGlueJob:
     Type: AWS::Glue::Job
