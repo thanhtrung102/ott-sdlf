@@ -99,22 +99,31 @@ aws lambda invoke --function-name sdlf-ott-mainLUT-refresh --region ap-southeast
 Write-Host "LUT refresh fired asynchronously. Watch CloudWatch /aws/lambda/sdlf-ott-mainLUT-refresh."
 ```
 
-The LUT refresh takes ~10-15 minutes (depends on how many UNKNOWN keywords need classification). Tail the logs:
+Runtime depends entirely on how many *new* UNKNOWN keywords the run finds. Only keywords absent from **both** the existing LUT and the resolved-unknown set are sent to Bedrock (50 per `converse` call, `MAX_NEW_KEYWORDS=15000` ceiling, 900 s Lambda timeout):
+
+- **First run on a fresh deploy** — the LUT is near-empty, thousands of keywords are new, so the run goes the full ~10-15 min and may hit the timeout buffer and resume on the next trigger.
+- **Steady-state run** — the LUT already covers the bulk of demand, so a run typically finds only a few dozen new keywords and finishes in **~15-30 seconds**.
+
+Tail the logs:
 
 ```powershell
 aws logs tail /aws/lambda/sdlf-ott-mainLUT-refresh --since 5m --follow --region ap-southeast-1
 ```
 
-**Expected log lines** (sample; numbers grow with each run — current LUT has 125k+ entries as of 2026-05-20):
+**Expected log lines** (live — steady-state run, numbers vary per run):
 
 ```
-2026-05-20T... INFO Loaded existing LUT: 122665 entries
-2026-05-20T... INFO Fetched 20000 UNKNOWN keywords from Athena
-2026-05-20T... INFO Bedrock batch 1/200 classified — added 47 PHIM_VIET, 23 ANIME, 12 PHIM_TRUNG ...
-...
-2026-05-20T... INFO Uploaded refreshed classifier to s3://...-artifacts-prod/ott/searchevents/genre_classifier_pkg.zip
-2026-05-20T... INFO LUT refresh complete. Added 4823 new entries (new total: 127488).
+INFO LUT refresh triggered — source: workshop detail-type: Manual Trigger
+INFO Athena: 33161 UNKNOWN keyword_norm values in curated table
+INFO Loaded 128596 LUT entries, 31157 resolved-unknown markers
+INFO Candidates: 50 | skipped as unclassifiable: 0 | to classify via Bedrock: 50
+INFO   [1] classified: 3, unresolved: 47, batch errors: 0
+INFO Classification complete: 3 new genres, 47 confirmed-unclassifiable, 0 batch errors
+INFO Zip rebuilt: 128599 LUT entries, 31204 resolved-unknown -> s3://...-artifacts-prod/ott/searchevents/genre_classifier_pkg.zip
+INFO Zip mirrored to project bucket -> s3://ott-search-<ACCT>-prod/ott/searchevents/genre_classifier_pkg.zip
 ```
+
+`Athena: N UNKNOWN ...` counts *every* distinct UNKNOWN keyword in `curated`; `Candidates` is the subset not already in the LUT or the resolved set; `classified` is how many of those Bedrock assigned a genre. The rest are recorded as `resolved-unknown` so they are never re-sent — which is why a mature deployment classifies only a handful per run.
 
 > The LUT-Refresh Lambda writes the refreshed classifier zip to **both** the SDLF artifacts bucket (provenance) **and** the project-specific bucket `ott-search-${ACCT}-prod/ott/searchevents/` (which the Glue job reads `--extra-py-files` from). The mirror is wired inside `save_lut()` via the `PROJECT_BUCKET` env var + an `s3:PutObject` grant in `pipeline-ott-lutrefresh.yaml` — no manual copy or CICD step is needed, and the next Stage B run automatically uses the enriched LUT. See [§5.2.5](../5.2-prerequisites/#525-the-genre-classifier-zip-and-glue-script) for why the project bucket is separate from the SDLF artifacts bucket.
 

@@ -80,7 +80,7 @@ print("=" * 78)
 print("1. QUALITY GATES — row counts at each lifecycle stage")
 print("=" * 78)
 
-print("\n1a. Curated layer: total rows per genre across all 14 days")
+print("\n1a. Curated layer: total rows per genre (all dt partitions)")
 h, r = run(
     f"SELECT derived_genre, COUNT(*) FROM {DB}.curated GROUP BY derived_genre ORDER BY 2 DESC",
     "curated-by-genre",
@@ -100,7 +100,7 @@ print("\n" + "=" * 78)
 print("2. END-USER VALUE — actual insights this delivers")
 print("=" * 78)
 
-print("\n2a. Top 10 search keywords (14-day window, excludes UNKNOWN/EMPTY)")
+print("\n2a. Top 10 search keywords (all dt partitions, excludes UNKNOWN/EMPTY)")
 h, r = run(
     f"""SELECT keyword_norm, derived_genre, COUNT(*) AS searches
        FROM {DB}.curated
